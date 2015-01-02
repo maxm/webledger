@@ -147,5 +147,5 @@ func main() {
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/query", handleLogin(handleWithTemplate("query"))).Methods("GET")
 	router.Handle("/{path:.*}", http.FileServer(http.Dir("public")))
 	http.Handle("/", router)
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":8082", nil)
 }

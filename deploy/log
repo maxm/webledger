@@ -1,0 +1,1 @@
+ssh root@server.max.uy tail -f /var/log/upstart/webledger.log
