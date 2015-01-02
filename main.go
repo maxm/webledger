@@ -127,6 +127,7 @@ func oauthCallback(w http.ResponseWriter, r *http.Request) {
 	transport.Exchange(code)
 	cookie := CookieData{*transport.Token, getEmail()}
 	SetCookie(w, cookie)
+	http.Redirect(w, r, RootPath, http.StatusFound)
 }
 
 func main() {
