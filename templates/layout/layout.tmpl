@@ -25,7 +25,7 @@
         <div class="container">
           {{ if .ledger }}
             <a class="brand" href="{{.root}}/{{.ledger}}">{{.ledger}} ledger</a>
-            <form class="navbar-search pull-left" method="get" action="/{{.ledger}}/query">
+            <form class="navbar-search pull-left" method="get" action="{{.root}}/{{.ledger}}/query">
               <input type="text" class="search-query" name="query" value="{{ .query }}" placeholder="Query">
             </form>
           {{ end }}
