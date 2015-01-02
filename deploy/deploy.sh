@@ -3,6 +3,9 @@ ssh server <<'ENDSSH'
   mkdir -p /var/www/webledger/
 ENDSSH
 scp build/main.linux server:/var/www/webledger/main.linux.next
+scp -r public/ server:/var/www/webledger/
+scp -r templates/ server:/var/www/webledger/
+scp ledgers.json server:/var/www/webledger/
 scp deploy/webledger.conf server:/etc/init/
 ssh server <<'ENDSSH'
   /sbin/stop webledger

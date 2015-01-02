@@ -23,9 +23,10 @@ var oauthconfig = &oauth.Config{
 	Scope:        googleAuth.UserinfoEmailScope,
 	AuthURL:      "https://accounts.google.com/o/oauth2/auth",
 	TokenURL:     "https://accounts.google.com/o/oauth2/token",
-	RedirectURL:  "http://localhost:8080/oauthcallback",
+	RedirectURL:  "http://max.uy/ledger/oauthcallback",
 	AccessType:   "offline",
 }
+var RootPath = "/ledger"
 
 var transport *oauth.Transport = &oauth.Transport{Config: oauthconfig}
 
@@ -62,6 +63,7 @@ func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request
 			"ledgers": AuthLedgers(email),
 			"query":   r.FormValue("query"),
 			"email":   email,
+			"root":    RootPath,
 		}
 		if len(ledger) > 0 {
 			data["accounts"] = LedgerAccounts(ledger)
