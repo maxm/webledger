@@ -5,6 +5,7 @@
         var cursor = cm.getCursor();
         var line = cm.getLine(cursor.line);
         var typed = line.substr(0, cursor.ch);
+        var match
         if (line.length == 0 && cursor.line != 0 && cm.getLine(cursor.line-1).match(/^\s*$/)) {
             var previous = today();
             var next = today();
@@ -32,7 +33,18 @@
                 list: ['$','US$'],
                 from: cursor,
                 to: cursor
-            }
+            };
+        } else if (match = typed.match(/^\s+\w[\w\s:]*\s\s+US\$\s*([\d+\.]+)$/)) {
+            var num = parseFloat(match[1]);
+            var visa = Math.round(num * 0.03 * 100) / 100;
+            var visaIva = Math.round(visa * 0.22 * 100) / 100;
+            var descuentoIva = Math.floor(visaIva * (2.0/22) * 100) / 100;
+            var beforeLength = typed.match(/^\s+\w[\w\s:]*\s\s+US\$\s*/)[0].length;
+            return {
+                list: [(num + visa + visaIva + descuentoIva).toFixed(2)],
+                from: {line:cursor.line, ch: beforeLength},
+                to: {line:cursor.line, ch:beforeLength + match[1].length}
+            };
         } else if (typed.match(/^\s+\w/) && !typed.match(/^\s+\w.*?\s\s/)) {
             account = typed.match(/^\s+(\w.*)/)[1];
             var accounts = $.grep(Accounts, function(s) { return s.match(new RegExp(account, "i")) });
