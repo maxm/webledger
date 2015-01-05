@@ -41,7 +41,7 @@
             var descuentoIva = Math.floor(visaIva * (2.0/22) * 100) / 100;
             var beforeLength = typed.match(/^\s+\w[\w\s:]*\s\s+US\$\s*/)[0].length;
             return {
-                list: [(num + visa + visaIva + descuentoIva).toFixed(2)],
+                list: [(num + visa + visaIva + descuentoIva).toFixed(2) + " "],
                 from: {line:cursor.line, ch: beforeLength},
                 to: {line:cursor.line, ch:beforeLength + match[1].length}
             };
