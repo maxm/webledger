@@ -80,16 +80,12 @@ func handleLogin(handler func(http.ResponseWriter, *http.Request)) func(http.Res
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie := GetCookie(r)
 		transport.Token = &cookie.Token
-		if transport.Token != nil && transport.Token.Expired() {
-			err := transport.Refresh()
-			if err != nil {
-				cookie = CookieData{*transport.Token, getEmail()}
-				SetCookie(w, cookie)
-			}
-		}
-		if transport.Token == nil || transport.Token.Expired() || len(cookie.Email) == 0 || getEmail() != cookie.Email {
+		if len(cookie.Email) == 0 || getEmail() != cookie.Email {
 			http.Redirect(w, r, oauthconfig.AuthCodeURL(""), http.StatusFound)
 		} else {
+			cookie = CookieData{*transport.Token, cookie.Email}
+			SetCookie(w, cookie)
+
 			ledger := mux.Vars(r)["ledger"]
 			if len(ledger) > 0 && !AuthLedger(ledger, cookie.Email) {
 				w.WriteHeader(http.StatusUnauthorized)
