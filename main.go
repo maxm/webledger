@@ -47,7 +47,8 @@ func GetCookie(r *http.Request) CookieData {
 	return data
 }
 
-func SetCookie(w http.ResponseWriter, cookie CookieData) {
+func SetCookie(w http.ResponseWriter, token oauth.Token, email string) {
+	cookie := CookieData{token, email}
 	b, _ := json.Marshal(cookie)
 	value := string(b)
 	c := http.Cookie{Name: "auth", Value: url.QueryEscape(value)}
@@ -83,8 +84,7 @@ func handleLogin(handler func(http.ResponseWriter, *http.Request)) func(http.Res
 		if len(cookie.Email) == 0 || getEmail() != cookie.Email {
 			http.Redirect(w, r, oauthconfig.AuthCodeURL(""), http.StatusFound)
 		} else {
-			cookie = CookieData{*transport.Token, cookie.Email}
-			SetCookie(w, cookie)
+			SetCookie(w, *transport.Token, cookie.Email)
 
 			ledger := mux.Vars(r)["ledger"]
 			if len(ledger) > 0 && !AuthLedger(ledger, cookie.Email) {
@@ -128,9 +128,14 @@ func getEmail() string {
 func oauthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.FormValue("code")
 	transport.Exchange(code)
-	cookie := CookieData{*transport.Token, getEmail()}
-	SetCookie(w, cookie)
+	SetCookie(w, *transport.Token, getEmail())
 	http.Redirect(w, r, RootPath, http.StatusFound)
+}
+
+func logout(w http.ResponseWriter, r *http.Request) {
+	c := http.Cookie{Name: "auth", Value: ""}
+	http.SetCookie(w, &c)
+	w.Write([]byte("Logout"))
 }
 
 func main() {
@@ -148,6 +153,7 @@ func main() {
 	router := mux.NewRouter()
 	router.HandleFunc("/", handleLogin(handleWithTemplate("index"))).Methods("GET")
 	router.HandleFunc("/oauthcallback", oauthCallback).Methods("GET")
+	router.HandleFunc("/logout", logout).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}", handleLogin(handleWithTemplate("edit"))).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}", handleLogin(editLedger)).Methods("POST")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/query", handleLogin(handleWithTemplate("query"))).Methods("GET")
