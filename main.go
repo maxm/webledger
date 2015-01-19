@@ -52,6 +52,7 @@ func SetCookie(w http.ResponseWriter, token oauth.Token, email string) {
 	b, _ := json.Marshal(cookie)
 	value := string(b)
 	c := http.Cookie{Name: "auth", Value: url.QueryEscape(value)}
+	c.Path = RootPath
 	http.SetCookie(w, &c)
 }
 
