@@ -33,7 +33,6 @@ func InitLedgers() {
 	decoder.Decode(&ledgers)
 
 	root, _ := os.Getwd()
-	defer os.Chdir(root)
 
 	for name, def := range ledgers {
 		dir := path.Join(root, "repos", name)
@@ -50,6 +49,11 @@ func LedgerPath(ledger string) string {
 	return path.Join(root, "repos", ledger, ledgers[ledger].Path)
 }
 
+func UpdateLedger(ledger string) {
+	ledger_path := path.Dir(LedgerPath(ledger))
+	Run(ledger_path, "git", "pull", "origin", "master")
+}
+
 func ReadLedger(ledger string) string {
 	bytes, err := ioutil.ReadFile(LedgerPath(ledger))
 	if err != nil {
@@ -59,25 +63,24 @@ func ReadLedger(ledger string) string {
 }
 
 func WriteLedger(ledger string, file string, author string) {
-	root, _ := os.Getwd()
-	defer os.Chdir(root)
-
 	ledger_path := LedgerPath(ledger)
-	os.Chdir(path.Dir(ledger_path))
-	Run("git", "pull", "origin", "master")
+	ledger_dir := path.Dir(ledger_path)
+	Run(ledger_dir, "git", "pull", "origin", "master")
 	err := ioutil.WriteFile(ledger_path, []byte(file), os.ModePerm)
 	if err != nil {
 		Log("Error %v", err)
 		return
 	}
-	Run("git", "add", ledgers[ledger].Path)
-	Run("git", "commit", "-m", "webledger", "--author", author)
-	Run("git", "push", "origin", "master")
+	Run(ledger_dir, "git", "add", ledgers[ledger].Path)
+	Run(ledger_dir, "git", "commit", "-m", "webledger", "--author", author)
+	Run(ledger_dir, "git", "push", "origin", "master")
 }
 
-func Run(name string, arg ...string) {
+func Run(dir string, name string, arg ...string) {
 	Log("%v %v", name, arg)
-	out, err := exec.Command(name, arg...).CombinedOutput()
+	cmd := exec.Command(name, arg...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		Log("Error %v", err)
 	}

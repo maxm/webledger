@@ -68,6 +68,7 @@ func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request
 			"root":    RootPath,
 		}
 		if len(ledger) > 0 {
+			UpdateLedger(ledger)
 			data["accounts"] = LedgerAccounts(ledger)
 			data["ledgerFile"] = ReadLedger(ledger)
 		}
