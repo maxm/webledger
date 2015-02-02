@@ -38,7 +38,7 @@
             var num = parseFloat(match[1]);
             var visa = Math.round(num * 0.03 * 100) / 100;
             var visaIva = Math.round(visa * 0.22 * 100) / 100;
-            var descuentoIva = Math.floor(visaIva * (2.0/22) * 100) / 100;
+            var descuentoIva = -Math.floor(visaIva * (2.0/22) * 100) / 100;
             var beforeLength = typed.match(/^\s+\w[\w\s:]*\s\s+US\$\s*/)[0].length;
             return {
                 list: [(num + visa + visaIva + descuentoIva).toFixed(2) + " "],
