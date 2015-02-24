@@ -17,6 +17,8 @@ type CookieData struct {
 	Email string
 }
 
+var validCookies []CookieData = []CookieData{}
+
 var oauthconfig = &oauth.Config{
 	ClientId:     ClientId,
 	ClientSecret: ClientSecret,
@@ -54,6 +56,7 @@ func SetCookie(w http.ResponseWriter, token oauth.Token, email string) {
 	c := http.Cookie{Name: "auth", Value: url.QueryEscape(value)}
 	c.Path = RootPath
 	http.SetCookie(w, &c)
+	validCookies = append(validCookies, cookie)
 }
 
 func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request) {
@@ -113,6 +116,12 @@ func editLedger(w http.ResponseWriter, r *http.Request) {
 }
 
 func getEmail() string {
+	for _, c := range validCookies {
+		if c.Token.AccessToken == transport.Token.AccessToken {
+			return c.Email
+		}
+	}
+
 	client := transport.Client()
 	service, err := googleAuth.New(client)
 	if err != nil {
