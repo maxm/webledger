@@ -74,6 +74,7 @@ func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request
 			UpdateLedger(ledger)
 			data["accounts"] = LedgerAccounts(ledger)
 			data["ledgerFile"] = ReadLedger(ledger)
+			data["balance"] = LedgerExec(ledger, "bal assets")
 		}
 		if template == "query" {
 			data["result"] = LedgerExec(ledger, r.FormValue("query"))

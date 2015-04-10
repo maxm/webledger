@@ -7,6 +7,11 @@ body {
   font-family: 'Monaco', 'Courier New', monospace;
 }
 
+.edit-balance {
+  float: right;
+  margin-left: 1em;
+}
+
 .full-file {
   height: 600px;
 }
