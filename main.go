@@ -90,6 +90,12 @@ func handleRaw(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(ReadLedger(ledger)))
 }
 
+func handleQueryText(w http.ResponseWriter, r *http.Request) {
+	ledger := mux.Vars(r)["ledger"]
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(LedgerExec(ledger, r.FormValue("query"))))
+}
+
 func handleLogin(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie := GetCookie(r)
@@ -195,6 +201,7 @@ func main() {
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}", handleLogin(handleWithTemplate("edit"))).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}", handleLogin(editLedger)).Methods("POST")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/query", handleLogin(handleWithTemplate("query"))).Methods("GET")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/query_text", handleLogin(handleQueryText)).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/app_auth", handleLogin(handleWithTemplate("app_auth"))).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/raw", handleLogin(handleRaw)).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/append", handleLogin(handleAppend)).Methods("POST")
