@@ -69,6 +69,7 @@ func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request
 			"query":   r.FormValue("query"),
 			"email":   email,
 			"root":    RootPath,
+			"cookies": r.Header.Get("Cookie"),
 		}
 		if len(ledger) > 0 {
 			UpdateLedger(ledger)
@@ -81,6 +82,12 @@ func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request
 		}
 		RenderTemplate(w, template, data)
 	}
+}
+
+func handleRaw(w http.ResponseWriter, r *http.Request) {
+	ledger := mux.Vars(r)["ledger"]
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(ReadLedger(ledger)))
 }
 
 func handleLogin(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
@@ -114,6 +121,25 @@ func editLedger(w http.ResponseWriter, r *http.Request) {
 
 	WriteLedger(ledger, file, "webledger <"+GetCookie(r).Email+">")
 	handleWithTemplate("edit")(w, r)
+}
+
+func handleAppend(w http.ResponseWriter, r *http.Request) {
+	Log("Append")
+	ledger := mux.Vars(r)["ledger"]
+	file := ReadLedger(ledger)
+
+	strings.Replace(file, "\r\n", "\n", -1)
+	for len(file) < 2 || file[len(file)-1] != '\n' || file[len(file)-2] != '\n' {
+		file += "\n"
+	}
+	file += strings.TrimSpace(r.FormValue("append"))
+
+	if len(file) == 0 || file[len(file)-1] != '\n' {
+		file += "\n"
+	}
+
+	WriteLedger(ledger, file, "webledger <"+GetCookie(r).Email+">")
+	handleRaw(w, r)
 }
 
 func getEmail() string {
@@ -169,6 +195,9 @@ func main() {
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}", handleLogin(handleWithTemplate("edit"))).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}", handleLogin(editLedger)).Methods("POST")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/query", handleLogin(handleWithTemplate("query"))).Methods("GET")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/app_auth", handleLogin(handleWithTemplate("app_auth"))).Methods("GET")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/raw", handleLogin(handleRaw)).Methods("GET")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/append", handleLogin(handleAppend)).Methods("POST")
 	router.Handle("/{path:.*}", http.FileServer(http.Dir("public")))
 	http.Handle("/", router)
 	http.ListenAndServe(":8082", nil)
