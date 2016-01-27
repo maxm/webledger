@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/mattn/go-shellwords"
 	"io/ioutil"
+	"net/smtp"
 	"os"
 	"os/exec"
 	"path"
@@ -12,9 +13,15 @@ import (
 )
 
 type LedgerDef struct {
-	Url   string
-	Path  string
-	Users []string
+	Url    string
+	Path   string
+	Users  []string
+	Notify []LedgerNotify
+}
+
+type LedgerNotify struct {
+	Target string
+	Regex  string
 }
 
 var ledgers map[string]LedgerDef
@@ -39,7 +46,9 @@ func InitLedgers() {
 		_, err = os.Stat(dir)
 		if os.IsNotExist(err) {
 			os.MkdirAll(dir, os.ModeDir|0700)
-			Run("git", "clone", def.Url, dir)
+			root, _ := os.Getwd()
+			root = path.Join(root, "repos")
+			Run(root, "git", "clone", def.Url, dir)
 		}
 	}
 }
@@ -74,9 +83,31 @@ func WriteLedger(ledger string, file string, author string) {
 	Run(ledger_dir, "git", "add", ledgers[ledger].Path)
 	Run(ledger_dir, "git", "commit", "-m", "webledger", "--author", author)
 	Run(ledger_dir, "git", "push", "origin", "master")
+
+	diff := Run(ledger_dir, "git", "diff", "HEAD^", "-U0")
+	for _, notify := range ledgers[ledger].Notify {
+		re := regexp.MustCompile(notify.Regex)
+		if re.MatchString(diff) {
+			Log("Notify match, send mail to %v", notify.Target)
+			SendNotifyMail(ledger, diff, notify.Target)
+		}
+	}
 }
 
-func Run(dir string, name string, arg ...string) {
+func SendNotifyMail(ledger string, text string, target string) {
+	msg := `From: ledgers@server.max.uy
+To: ` + target + `
+Subject: Ledger notification from ` + ledger + `
+
+` + text
+
+	err := smtp.SendMail("localhost:25", nil, "ledgers@server.max.uy", []string{target}, []byte(msg))
+	if err != nil {
+		Log("Error sending mail: %v", err)
+	}
+}
+
+func Run(dir string, name string, arg ...string) string {
 	Log("%v %v", name, arg)
 	cmd := exec.Command(name, arg...)
 	cmd.Dir = dir
@@ -85,6 +116,7 @@ func Run(dir string, name string, arg ...string) {
 		Log("Error %v", err)
 	}
 	Log(string(out))
+	return string(out)
 }
 
 func LedgerExec(ledger string, query string) string {

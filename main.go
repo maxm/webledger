@@ -26,9 +26,13 @@ var oauthconfig = &oauth.Config{
 	AuthURL:      "https://accounts.google.com/o/oauth2/auth",
 	TokenURL:     "https://accounts.google.com/o/oauth2/token",
 	RedirectURL:  "http://max.uy/ledger/oauthcallback",
-	AccessType:   "offline",
+	// RedirectURL: "http://localhost:8082/oauthcallback",
+	AccessType: "offline",
 }
+
 var RootPath = "/ledger"
+
+// var RootPath = "http://localhost:8082"
 
 var transport *oauth.Transport = &oauth.Transport{Config: oauthconfig}
 
