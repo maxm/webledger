@@ -6,10 +6,11 @@ scp build/main.linux server:/var/www/webledger/main.linux.next
 scp -r public/ server:/var/www/webledger/
 scp -r templates/ server:/var/www/webledger/
 scp ledgers.json server:/var/www/webledger/
-scp deploy/webledger.conf server:/etc/init/
+scp deploy/webledger.service server:/etc/systemd/system/
 ssh server <<'ENDSSH'
-  /sbin/stop webledger
+  systemctl stop webledger
   mv /var/www/webledger/main.linux.next /var/www/webledger/main.linux
-  /sbin/start webledger
+  systemctl start webledger
+  systemctl enable webledger
 ENDSSH
 
