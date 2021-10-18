@@ -1,8 +1,8 @@
 package main
 
 import (
-	"code.google.com/p/goauth2/oauth"
-	googleAuth "code.google.com/p/google-api-go-client/oauth2/v2"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
@@ -10,31 +10,31 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"context"
+	"io/ioutil"
 )
 
 type CookieData struct {
-	Token oauth.Token
+	Token oauth2.Token
 	Email string
 }
 
 var validCookies []CookieData = []CookieData{}
 
-var oauthconfig = &oauth.Config{
-	ClientId:     ClientId,
+var oauthconfig = &oauth2.Config{
+	ClientID:     ClientId,
 	ClientSecret: ClientSecret,
-	Scope:        googleAuth.UserinfoEmailScope,
-	AuthURL:      "https://accounts.google.com/o/oauth2/auth",
-	TokenURL:     "https://accounts.google.com/o/oauth2/token",
-	RedirectURL:  "http://max.uy/ledger/oauthcallback",
+	Scopes:        []string{"https://www.googleapis.com/auth/userinfo.email"},
+	Endpoint: google.Endpoint,
+	RedirectURL:  "https://max.uy/ledger/oauthcallback",
 	// RedirectURL: "http://localhost:8082/oauthcallback",
-	AccessType: "offline",
 }
+
+const oauthGoogleUrlAPI = "https://www.googleapis.com/oauth2/v2/userinfo?access_token="
 
 var RootPath = "/ledger"
 
 // var RootPath = "http://localhost:8082"
-
-var transport *oauth.Transport = &oauth.Transport{Config: oauthconfig}
 
 func Log(message string, a ...interface{}) {
 	message = fmt.Sprintf(message, a...)
@@ -53,7 +53,7 @@ func GetCookie(r *http.Request) CookieData {
 	return data
 }
 
-func SetCookie(w http.ResponseWriter, token oauth.Token, email string) {
+func SetCookie(w http.ResponseWriter, token oauth2.Token, email string) {
 	cookie := CookieData{token, email}
 	b, _ := json.Marshal(cookie)
 	value := string(b)
@@ -103,12 +103,9 @@ func handleQueryText(w http.ResponseWriter, r *http.Request) {
 func handleLogin(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie := GetCookie(r)
-		transport.Token = &cookie.Token
-		if len(cookie.Email) == 0 || getEmail() != cookie.Email {
-			http.Redirect(w, r, oauthconfig.AuthCodeURL(""), http.StatusFound)
+		if len(cookie.Email) == 0 || getEmail(cookie.Token) != cookie.Email {
+			http.Redirect(w, r, oauthconfig.AuthCodeURL("randomtoken", oauth2.AccessTypeOffline), http.StatusFound)
 		} else {
-			SetCookie(w, *transport.Token, cookie.Email)
-
 			ledger := mux.Vars(r)["ledger"]
 			if len(ledger) > 0 && !AuthLedger(ledger, cookie.Email) {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -152,31 +149,31 @@ func handleAppend(w http.ResponseWriter, r *http.Request) {
 	handleRaw(w, r)
 }
 
-func getEmail() string {
+func getEmail(token oauth2.Token) string {
 	for _, c := range validCookies {
-		if c.Token.AccessToken == transport.Token.AccessToken {
+		if c.Token.AccessToken == token.AccessToken {
 			return c.Email
 		}
 	}
 
-	client := transport.Client()
-	service, err := googleAuth.New(client)
+	response, err := http.Get(oauthGoogleUrlAPI + token.AccessToken)
 	if err != nil {
-		Log("Error %v", err)
 		return ""
 	}
-	tokenInfo, err := service.Tokeninfo().Access_token(transport.AccessToken).Do()
+	defer response.Body.Close()
+	contents, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		Log("Error %v", err)
 		return ""
 	}
-	return tokenInfo.Email
+	var result map[string]interface{}
+	json.Unmarshal([]byte(contents), &result)
+	return result["email"].(string);
 }
 
 func oauthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.FormValue("code")
-	transport.Exchange(code)
-	SetCookie(w, *transport.Token, getEmail())
+	tok, _ := oauthconfig.Exchange(context.Background(), code)
+	SetCookie(w, *tok, getEmail(*tok))
 	http.Redirect(w, r, RootPath, http.StatusFound)
 }
 
