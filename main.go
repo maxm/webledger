@@ -190,10 +190,19 @@ func getEmail(token oauth2.Token) string {
 	defer response.Body.Close()
 	contents, err := ioutil.ReadAll(response.Body)
 	if err != nil {
+		Log("Error getting email: %v", err)
+		return ""
+	}
+	if (contents == nil) {
+		Log("Error getting email: contents is nil")
 		return ""
 	}
 	var result map[string]interface{}
 	json.Unmarshal([]byte(contents), &result)
+	if (result == nil || result["email"] == nil) {
+		Log("Error getting email: result is nil")
+		return ""
+	}
 	return result["email"].(string);
 }
 
