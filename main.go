@@ -63,7 +63,7 @@ func SetCookie(w http.ResponseWriter, token oauth2.Token, email string) {
 	validCookies = append(validCookies, cookie)
 }
 
-func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request) {
+func handleWithTemplateAndData(template string, fillData func(map[string]interface{})) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ledger := mux.Vars(r)["ledger"]
 		email := GetCookie(r).Email
@@ -81,11 +81,38 @@ func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request
 			data["ledgerFile"] = ReadLedger(ledger)
 			data["balance"] = LedgerExec(ledger, "bal assets")
 		}
+		fillData(data)
 		if template == "query" {
 			data["result"] = LedgerExec(ledger, r.FormValue("query"))
 		}
 		RenderTemplate(w, template, data)
 	}
+}
+
+func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request) {
+	return handleWithTemplateAndData(template, func(map[string]interface{}) { })
+}
+
+func monthlyData(data map[string]interface{}) {
+	ledger := data["ledger"].(string)
+	
+	now := time.Now()
+	last_month := now.AddDate(0, -1, 0).Format("Jan")
+	this_month := now.Format("Jan")
+	this_year := now.Format("2006")
+	last_year := now.AddDate(-1, 0, 0).Format("2006")
+
+	data["yearly_expense"] = LedgerExec(ledger, "bal expenses and not retiro and not bono -e '" + this_month + " " + this_year + "' -b '" + last_month + " " + last_year + "' -X US$ -H --depth 1  -F '%T'")
+	data["monthly_expense"] =  LedgerExec(ledger, "bal expenses and not retiro and not bono -e '" + this_month + " " + this_year + "' -b '" + last_month + " " + last_year + "' -X US$ -H --depth 1  -F '%(T/12)'")
+
+	data["last_month"] = last_month
+	data["last_month_income"] = LedgerExec(ledger, "bal income -p '" + last_month + "' -X US$ -H --depth 1  -F '%(-T)'")
+
+	last_last_month := now.AddDate(0, -2, 0).Format("Jan")
+	data["last_last_month"] = last_last_month
+	data["last_last_month_income"] = LedgerExec(ledger, "bal income -p '" + last_last_month + "' -X US$ -H --depth 1  -F '%(-T)'")
+
+	data["bank_balance"] = LedgerExec(ledger, "bal assets:bancos -X US$ -H --depth 1  -F '%T'")
 }
 
 func handleRaw(w http.ResponseWriter, r *http.Request) {
@@ -206,6 +233,7 @@ func main() {
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/app_auth", handleLogin(handleWithTemplate("app_auth"))).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/raw", handleLogin(handleRaw)).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/append", handleLogin(handleAppend)).Methods("POST")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/monthly", handleLogin(handleWithTemplateAndData("monthly", monthlyData))).Methods("GET")
 	router.Handle("/{path:.*}", http.FileServer(http.Dir("public")))
 	http.Handle("/", router)
 	http.ListenAndServe(":8082", nil)

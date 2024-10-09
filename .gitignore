@@ -3,3 +3,4 @@ ledgers.json
 webledger
 repos/
 build/
+.DS_Store
