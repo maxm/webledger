@@ -130,16 +130,39 @@ func handleQueryText(w http.ResponseWriter, r *http.Request) {
 func handleLogin(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie := GetCookie(r)
-		if len(cookie.Email) == 0 || getEmail(cookie.Token) != cookie.Email {
-			http.Redirect(w, r, oauthconfig.AuthCodeURL("randomtoken", oauth2.AccessTypeOffline), http.StatusFound)
-		} else {
-			ledger := mux.Vars(r)["ledger"]
-			if len(ledger) > 0 && !AuthLedger(ledger, cookie.Email) {
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte("Unauthorized"))
-			} else {
-				handler(w, r)
+		if len(cookie.Email) == 0 {
+			http.Redirect(w, r, oauthconfig.AuthCodeURL("randomtoken", oauth2.AccessTypeOffline, oauth2.ApprovalForce), http.StatusFound)
+			return
+		}
+		
+		// Refresh token if expired or about to expire
+		if time.Until(cookie.Token.Expiry) < 5*time.Minute {
+			Log("Token expired or expiring soon, refreshing...")
+			tokenSource := oauthconfig.TokenSource(context.Background(), &cookie.Token)
+			newToken, err := tokenSource.Token()
+			if err != nil {
+				Log("Token refresh failed: %v", err)
+				http.Redirect(w, r, oauthconfig.AuthCodeURL("randomtoken", oauth2.AccessTypeOffline, oauth2.ApprovalForce), http.StatusFound)
+				return
 			}
+			SetCookie(w, *newToken, cookie.Email)
+			cookie.Token = *newToken
+			Log("Token refreshed successfully")
+		}
+		
+		// Verify email still matches
+		if getEmail(cookie.Token) != cookie.Email {
+			Log("Email mismatch, redirecting to login")
+			http.Redirect(w, r, oauthconfig.AuthCodeURL("randomtoken", oauth2.AccessTypeOffline, oauth2.ApprovalForce), http.StatusFound)
+			return
+		}
+		
+		ledger := mux.Vars(r)["ledger"]
+		if len(ledger) > 0 && !AuthLedger(ledger, cookie.Email) {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("Unauthorized"))
+		} else {
+			handler(w, r)
 		}
 	}
 }
