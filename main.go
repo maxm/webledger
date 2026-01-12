@@ -97,18 +97,18 @@ func monthlyData(data map[string]interface{}) {
 	ledger := data["ledger"].(string)
 	
 	now := time.Now()
-	last_month := now.AddDate(0, -1, 0).Format("Jan")
 	this_month := now.Format("Jan")
 	this_year := now.Format("2006")
 	last_year := now.AddDate(-1, 0, 0).Format("2006")
 
-	data["yearly_expense"] = LedgerExec(ledger, "bal expenses and not retiro and not bono -e '" + this_month + " " + this_year + "' -b '" + last_month + " " + last_year + "' -X US$ -H --depth 1  -F '%T'")
-	data["monthly_expense"] =  LedgerExec(ledger, "bal expenses and not retiro and not bono -e '" + this_month + " " + this_year + "' -b '" + last_month + " " + last_year + "' -X US$ -H --depth 1  -F '%(T/12)'")
+	data["yearly_expense"] = LedgerExec(ledger, "bal expenses and not retiro and not bono -e '" + this_month + " " + this_year + "' -b '" + this_month + " " + last_year + "' -X US$ -H --depth 1  -F '%T'")
+	data["monthly_expense"] =  LedgerExec(ledger, "bal expenses and not retiro and not bono -e '" + this_month + " " + this_year + "' -b '" + this_month + " " + last_year + "' -X US$ -H --depth 1  -F '%(T/12)'")
 
+	last_month := now.AddDate(0, -1, 0).Format("Jan 2006")
 	data["last_month"] = last_month
 	data["last_month_income"] = LedgerExec(ledger, "bal income -p '" + last_month + "' -X US$ -H --depth 1  -F '%(-T)'")
 
-	last_last_month := now.AddDate(0, -2, 0).Format("Jan")
+	last_last_month := now.AddDate(0, -2, 0).Format("Jan 2006")
 	data["last_last_month"] = last_last_month
 	data["last_last_month_income"] = LedgerExec(ledger, "bal income -p '" + last_last_month + "' -X US$ -H --depth 1  -F '%(-T)'")
 

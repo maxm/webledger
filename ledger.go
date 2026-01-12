@@ -126,7 +126,7 @@ func LedgerExec(ledger string, query string) string {
 		return err.Error()
 	}
 	params := append([]string{"-f", LedgerPath(ledger)}, parsed_query...)
-	Log("ledger %v", params)
+	Log("ledger %v", query)
 	result, err := exec.Command("ledger", params...).CombinedOutput()
 	if err != nil {
 		Log("Error %v", err)
