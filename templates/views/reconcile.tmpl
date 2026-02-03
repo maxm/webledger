@@ -10,10 +10,13 @@
         <div class="controls">
           <select name="account" id="account" class="input-xlarge">
             <option value="">Auto-detect from filename</option>
-            <option value="Assets:Bank:BROU">BROU (Assets:Bank:BROU)</option>
-            <option value="Assets:Bank:Itau">Itau (Assets:Bank:Itau)</option>
+            {{ range .bankAccounts }}
+            <option value="{{.}}">{{.}}</option>
+            {{ end }}
+            <option value="Assets:Bank:BROU">BROU (Assets:Bank:BROU) - create new</option>
+            <option value="Assets:Bank:Itau">Itau (Assets:Bank:Itau) - create new</option>
           </select>
-          <span class="help-block">Select the bank account or leave blank to auto-detect</span>
+          <span class="help-block">Select an existing bank account or use a new one</span>
         </div>
       </div>
       

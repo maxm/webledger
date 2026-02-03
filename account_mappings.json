@@ -1,0 +1,8 @@
+{
+  "description_mappings": [
+    {
+      "patterns": ["DEBITO PAQUETE", "IVA AL 22% IVA PAQUETE", "REDIVA 19210IVA PAQUETE", "IVA PAQUETE"],
+      "account": "Expenses:Banco:Itau:Comision Mantenimiento"
+    }
+  ]
+}

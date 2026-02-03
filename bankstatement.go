@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,11 +20,13 @@ type BankTransaction struct {
 	Balance     float64
 	Reference   string
 	Account     string // "Assets:Bank:BROU" or "Assets:Bank:Itau"
+	Currency    string // "$" for Pesos, "US$" for US Dollars
 }
 
 // BankStatement represents a complete bank statement
 type BankStatement struct {
 	Account      string
+	Currency     string // "$" for Pesos, "US$" for US Dollars
 	Transactions []BankTransaction
 	StartBalance float64
 	EndBalance   float64
@@ -40,17 +41,32 @@ func ParseBrouStatement(reader io.ReadSeeker) (*BankStatement, error) {
 		return nil, fmt.Errorf("error opening XLS file: %v", err)
 	}
 
-	if xlsFile.NumSheets() == 0 {
+	numSheets := xlsFile.NumSheets()
+	if numSheets == 0 {
 		return nil, fmt.Errorf("no sheets found in XLS file")
 	}
 
-	sheet := xlsFile.GetSheet(0)
-	if sheet == nil {
-		return nil, fmt.Errorf("could not get first sheet")
+	// Try each sheet to find transaction data
+	for sheetIdx := 0; sheetIdx < numSheets; sheetIdx++ {
+		sheet := xlsFile.GetSheet(sheetIdx)
+		if sheet == nil {
+			continue
+		}
+		
+		statement, err := parseBrouSheet(sheet)
+		if err == nil && len(statement.Transactions) > 0 {
+			return statement, nil
+		}
 	}
+
+	return nil, fmt.Errorf("no transaction data found in any sheet")
+}
+
+func parseBrouSheet(sheet *xls.WorkSheet) (*BankStatement, error) {
 
 	statement := &BankStatement{
 		Account:      "Assets:Bank:BROU",
+		Currency:     "$", // Default to Pesos, will detect from sheet
 		Transactions: []BankTransaction{},
 	}
 
@@ -61,17 +77,52 @@ func ParseBrouStatement(reader io.ReadSeeker) (*BankStatement, error) {
 	// First pass: find header row and column indices
 	maxRow := int(sheet.MaxRow)
 	for i := 0; i < maxRow && i < 100; i++ {
-		row := sheet.Row(i)
+		var row *xls.Row
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					row = nil
+				}
+			}()
+			row = sheet.Row(i)
+		}()
+		
 		if row == nil {
+			continue
+		}
+		
+		// Safely get last column index
+		lastCol := 0
+		func() {
+			defer func() {
+				if recover() != nil {
+					lastCol = 0
+				}
+			}()
+			lastCol = row.LastCol()
+		}()
+		
+		if lastCol == 0 {
 			continue
 		}
 
 		// Check if this is the header row
-		for colIdx := 0; colIdx < row.LastCol(); colIdx++ {
+		for colIdx := 0; colIdx < lastCol; colIdx++ {
 			cellValue := row.Col(colIdx)
 			cellStr := strings.TrimSpace(cellValue)
+			
+			// Detect currency from "Moneda" field or currency indicators
+			cellLower := strings.ToLower(cellStr)
+			if strings.Contains(cellLower, "moneda") {
+				if strings.Contains(cellStr, "US$") || strings.Contains(cellLower, "dolar") || strings.Contains(cellLower, "usd") {
+					statement.Currency = "US$"
+				} else if strings.Contains(cellStr, "$") || strings.Contains(cellLower, "peso") {
+					statement.Currency = "$"
+				}
+			}
 
-			if strings.Contains(strings.ToLower(cellStr), "fecha") {
+			// Look for header row with column names (not date stamps)
+			if strings.EqualFold(cellStr, "fecha") {
 				headerRow = i
 				dateCol = colIdx
 			} else if strings.Contains(strings.ToLower(cellStr), "descripci") {
@@ -96,17 +147,37 @@ func ParseBrouStatement(reader io.ReadSeeker) (*BankStatement, error) {
 
 	// Second pass: parse transaction data
 	for i := headerRow + 1; i < maxRow; i++ {
-		row := sheet.Row(i)
+		var row *xls.Row
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					row = nil
+				}
+			}()
+			row = sheet.Row(i)
+		}()
+		
 		if row == nil {
 			continue
 		}
 		
-		if row.LastCol() == 0 {
+		// Safely get last column index
+		lastCol := 0
+		func() {
+			defer func() {
+				if recover() != nil {
+					lastCol = 0
+				}
+			}()
+			lastCol = row.LastCol()
+		}()
+		
+		if lastCol == 0 {
 			continue
 		}
 
 		dateStr := ""
-		if dateCol >= 0 {
+		if dateCol >= 0 && dateCol < lastCol {
 			dateStr = strings.TrimSpace(row.Col(dateCol))
 		}
 
@@ -114,32 +185,32 @@ func ParseBrouStatement(reader io.ReadSeeker) (*BankStatement, error) {
 		if dateStr == "" || strings.Contains(strings.ToLower(dateStr), "total") {
 			break
 		}
+		
+		// Try to parse the date - skip if it's not a valid date
+		date, err := parseBrouDate(dateStr)
+		if err != nil {
+			// Skip rows that don't have valid dates
+			continue
+		}
 
 		desc := ""
-		if descCol >= 0 {
+		if descCol >= 0 && descCol < lastCol {
 			desc = strings.TrimSpace(row.Col(descCol))
 		}
 
 		ref := ""
-		if refCol >= 0 {
+		if refCol >= 0 && refCol < lastCol {
 			ref = strings.TrimSpace(row.Col(refCol))
 		}
 
 		debitStr := ""
-		if debitCol >= 0 {
+		if debitCol >= 0 && debitCol < lastCol {
 			debitStr = strings.TrimSpace(row.Col(debitCol))
 		}
 
 		creditStr := ""
-		if creditCol >= 0 {
+		if creditCol >= 0 && creditCol < lastCol {
 			creditStr = strings.TrimSpace(row.Col(creditCol))
-		}
-
-		// Parse date (DD/MM/YYYY format)
-		date, err := parseBrouDate(dateStr)
-		if err != nil {
-			Log("Warning: could not parse date '%s': %v", dateStr, err)
-			continue
 		}
 
 		debit := parseAmount(debitStr)
@@ -152,6 +223,7 @@ func ParseBrouStatement(reader io.ReadSeeker) (*BankStatement, error) {
 			Credit:      credit,
 			Reference:   ref,
 			Account:     "Assets:Bank:BROU",
+			Currency:    statement.Currency,
 		}
 
 		statement.Transactions = append(statement.Transactions, transaction)
@@ -185,6 +257,7 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 
 	statement := &BankStatement{
 		Account:      "Assets:Bank:Itau",
+		Currency:     "$", // Default to Pesos, will detect from sheet
 		Transactions: []BankTransaction{},
 	}
 
@@ -192,19 +265,50 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 	var dateCol, conceptCol, debitCol, creditCol, balanceCol, refCol int = -1, -1, -1, -1, -1, -1
 
 	maxRow := int(sheet.MaxRow)
+	
 	for i := 0; i < maxRow && i < 100; i++ {
-		row := sheet.Row(i)
+		var row *xls.Row
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					row = nil
+				}
+			}()
+			row = sheet.Row(i)
+		}()
+		
 		if row == nil {
 			continue
 		}
 		
-		if row.LastCol() == 0 {
+		// Safely get last column index
+		lastCol := 0
+		func() {
+			defer func() {
+				if recover() != nil {
+					lastCol = 0
+				}
+			}()
+			lastCol = row.LastCol()
+		}()
+		
+		if lastCol == 0 {
 			continue
 		}
 
-		for colIdx := 0; colIdx < row.LastCol(); colIdx++ {
+		for colIdx := 0; colIdx < lastCol; colIdx++ {
 			cellValue := row.Col(colIdx)
-			cellStr := strings.TrimSpace(strings.ToLower(cellValue))
+			cellRaw := strings.TrimSpace(cellValue)
+			cellStr := strings.ToLower(cellRaw)
+			
+			// Detect currency from "Moneda" field or currency indicators
+			if strings.Contains(cellStr, "moneda") || strings.Contains(cellStr, "currency") {
+				if strings.Contains(cellRaw, "US$") || strings.Contains(cellStr, "dolar") || strings.Contains(cellStr, "usd") {
+					statement.Currency = "US$"
+				} else if strings.Contains(cellRaw, "$") || strings.Contains(cellStr, "peso") {
+					statement.Currency = "$"
+				}
+			}
 
 			if cellStr == "fecha" {
 				headerRow = i
@@ -232,17 +336,37 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 	}
 
 	for i := headerRow + 1; i < maxRow; i++ {
-		row := sheet.Row(i)
+		var row *xls.Row
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					row = nil
+				}
+			}()
+			row = sheet.Row(i)
+		}()
+		
 		if row == nil {
 			continue
 		}
 		
-		if row.LastCol() == 0 {
+		// Safely get last column index
+		lastCol := 0
+		func() {
+			defer func() {
+				if recover() != nil {
+					lastCol = 0
+				}
+			}()
+			lastCol = row.LastCol()
+		}()
+		
+		if lastCol == 0 {
 			continue
 		}
 
 		dateStr := ""
-		if dateCol >= 0 {
+		if dateCol >= 0 && dateCol < lastCol {
 			dateStr = strings.TrimSpace(row.Col(dateCol))
 		}
 
@@ -250,10 +374,15 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 		if dateStr == "" || strings.Contains(strings.ToUpper(dateStr), "SALDO FINAL") {
 			break
 		}
+		
+		// Skip non-date rows
+		if !strings.Contains(dateStr, "/") {
+			continue
+		}
 
 		// Skip "SALDO ANTERIOR"
 		concept := ""
-		if conceptCol >= 0 {
+		if conceptCol >= 0 && conceptCol < lastCol {
 			concept = strings.TrimSpace(row.Col(conceptCol))
 		}
 		if strings.Contains(strings.ToUpper(concept), "SALDO ANTERIOR") {
@@ -261,28 +390,28 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 		}
 
 		ref := ""
-		if refCol >= 0 {
+		if refCol >= 0 && refCol < lastCol {
 			ref = strings.TrimSpace(row.Col(refCol))
 		}
 
 		debitStr := ""
-		if debitCol >= 0 {
+		if debitCol >= 0 && debitCol < lastCol {
 			debitStr = strings.TrimSpace(row.Col(debitCol))
 		}
 
 		creditStr := ""
-		if creditCol >= 0 {
+		if creditCol >= 0 && creditCol < lastCol {
 			creditStr = strings.TrimSpace(row.Col(creditCol))
 		}
 
 		balanceStr := ""
-		if balanceCol >= 0 {
+		if balanceCol >= 0 && balanceCol < lastCol {
 			balanceStr = strings.TrimSpace(row.Col(balanceCol))
 		}
 
 		date, err := parseItauDate(dateStr)
 		if err != nil {
-			Log("Warning: could not parse date '%s': %v", dateStr, err)
+			// Skip rows that don't have valid dates
 			continue
 		}
 
@@ -298,6 +427,7 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 			Balance:     balance,
 			Reference:   ref,
 			Account:     "Assets:Bank:Itau",
+			Currency:    statement.Currency,
 		}
 
 		statement.Transactions = append(statement.Transactions, transaction)
@@ -313,8 +443,16 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 	return statement, nil
 }
 
-// parseBrouDate parses a date in DD/MM/YYYY format
+// parseBrouDate parses a date in DD/MM/YYYY format or Excel serial number
 func parseBrouDate(dateStr string) (time.Time, error) {
+	// First check if it's an Excel serial number (like 46048)
+	if serial, err := strconv.ParseFloat(dateStr, 64); err == nil {
+		// Excel epoch is December 30, 1899
+		excelEpoch := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC)
+		days := int(serial)
+		return excelEpoch.AddDate(0, 0, days), nil
+	}
+	
 	// Try DD/MM/YYYY format
 	formats := []string{
 		"02/01/2006",
@@ -402,6 +540,7 @@ func ParseBankStatementCSV(reader io.Reader, account string) (*BankStatement, er
 
 	statement := &BankStatement{
 		Account:      account,
+		Currency:     "$", // Default to Pesos for CSV
 		Transactions: []BankTransaction{},
 	}
 
@@ -419,6 +558,14 @@ func ParseBankStatementCSV(reader io.Reader, account string) (*BankStatement, er
 			debitCol = i
 		} else if strings.Contains(colLower, "crédito") || strings.Contains(colLower, "credito") || strings.Contains(colLower, "credit") {
 			creditCol = i
+		} else if strings.Contains(colLower, "moneda") || strings.Contains(colLower, "currency") {
+			// Check first data row for currency
+			if len(records) > 1 && i < len(records[1]) {
+				currencyVal := strings.TrimSpace(records[1][i])
+				if strings.Contains(currencyVal, "US$") || strings.Contains(strings.ToLower(currencyVal), "usd") || strings.Contains(strings.ToLower(currencyVal), "dolar") {
+					statement.Currency = "US$"
+				}
+			}
 		}
 	}
 
@@ -464,6 +611,7 @@ func ParseBankStatementCSV(reader io.Reader, account string) (*BankStatement, er
 			Debit:       parseAmount(debitStr),
 			Credit:      parseAmount(creditStr),
 			Account:     account,
+			Currency:    statement.Currency,
 		}
 
 		statement.Transactions = append(statement.Transactions, transaction)
@@ -496,67 +644,16 @@ func DetectBankFromFilename(filename string) string {
 
 // FormatCurrency formats an amount as currency
 func FormatCurrency(amount float64) string {
+	return FormatCurrencyWithSymbol(amount, "$")
+}
+
+// FormatCurrencyWithSymbol formats an amount with a specific currency symbol
+func FormatCurrencyWithSymbol(amount float64, currency string) string {
+	if currency == "" {
+		currency = "$"
+	}
 	if amount < 0 {
-		return fmt.Sprintf("$%.2f", amount)
+		return fmt.Sprintf("-%s%.2f", currency, -amount)
 	}
-	return fmt.Sprintf("$%.2f", amount)
-}
-
-// CompareTransactionDescriptions compares two transaction descriptions for similarity
-func CompareTransactionDescriptions(desc1, desc2 string) float64 {
-	desc1 = strings.ToLower(strings.TrimSpace(desc1))
-	desc2 = strings.ToLower(strings.TrimSpace(desc2))
-	
-	// Simple word-based comparison
-	words1 := strings.Fields(desc1)
-	words2 := strings.Fields(desc2)
-	
-	matches := 0
-	for _, w1 := range words1 {
-		for _, w2 := range words2 {
-			if w1 == w2 {
-				matches++
-				break
-			}
-		}
-	}
-	
-	totalWords := len(words1)
-	if len(words2) > totalWords {
-		totalWords = len(words2)
-	}
-	
-	if totalWords == 0 {
-		return 0.0
-	}
-	
-	return float64(matches) / float64(totalWords)
-}
-
-// NormalizeDescription cleans up a description for comparison
-func NormalizeDescription(desc string) string {
-	desc = strings.ToLower(strings.TrimSpace(desc))
-	
-	// Remove common prefixes
-	prefixes := []string{
-		"comercio:",
-		"trf.",
-		"transferencia",
-		"deb.",
-		"debito",
-		"cred.",
-		"credito",
-	}
-	
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(desc, prefix) {
-			desc = strings.TrimSpace(strings.TrimPrefix(desc, prefix))
-		}
-	}
-	
-	// Remove multiple spaces
-	re := regexp.MustCompile(`\s+`)
-	desc = re.ReplaceAllString(desc, " ")
-	
-	return desc
+	return fmt.Sprintf("%s%.2f", currency, amount)
 }

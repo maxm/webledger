@@ -287,11 +287,22 @@ func logout(w http.ResponseWriter, r *http.Request) {
 func handleReconcile(w http.ResponseWriter, r *http.Request) {
 	ledger := mux.Vars(r)["ledger"]
 	email := GetCookie(r).Email
+	
+	// Get bank accounts from ledger (accounts starting with Assets:Bank)
+	allAccounts := LedgerAccounts(ledger)
+	bankAccounts := []string{}
+	for _, acc := range allAccounts {
+		if strings.HasPrefix(acc, "Assets:Bank") {
+			bankAccounts = append(bankAccounts, acc)
+		}
+	}
+	
 	data := map[string]interface{}{
-		"ledger":  ledger,
-		"ledgers": AuthLedgers(email),
-		"email":   email,
-		"root":    RootPath,
+		"ledger":       ledger,
+		"ledgers":      AuthLedgers(email),
+		"email":        email,
+		"root":         RootPath,
+		"bankAccounts": bankAccounts,
 	}
 	RenderTemplate(w, "reconcile", data)
 }
@@ -362,11 +373,10 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Parse ledger transactions for this account
-	ledgerContent := ReadLedger(ledger)
-	ledgerTransactions, err := ParseLedgerTransactions(ledgerContent, bankAccount)
+	// Query ledger transactions for this account with currency filter
+	ledgerTransactions, err := QueryLedgerTransactions(ledger, bankAccount, statement.Currency)
 	if err != nil {
-		http.Error(w, "Error parsing ledger: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error querying ledger: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	

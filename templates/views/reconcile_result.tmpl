@@ -3,73 +3,84 @@
   <div class="span12">
     <h2>Reconciliation Results - {{.bankAccount}}</h2>
     
-    <div class="alert alert-success">
+    <div class="alert alert-info">
       <h4>Summary</h4>
       <div class="row">
         <div class="span6">
           <p><strong>Period:</strong> {{.result.DateRange}}</p>
+          <p><strong>Currency:</strong> {{.result.BankStatement.Currency}}</p>
           <p><strong>Bank Transactions:</strong> {{len .result.BankStatement.Transactions}}</p>
-          <p><strong>Matched:</strong> {{len .result.Matches}} ({{printf "%.0f" (div (mul (len .result.Matches) 100.0) (len .result.BankStatement.Transactions))}}%)</p>
+          {{ if gt (len .result.BankStatement.Transactions) 0 }}
+          <p><strong>Matched:</strong> {{len .result.Matches}} ({{printf "%.0f" (div (mul (len .result.Matches | float64) 100.0) (len .result.BankStatement.Transactions | float64))}}%)</p>
+          {{ else }}
+          <p><strong>Matched:</strong> {{len .result.Matches}} (0%)</p>
+          {{ end }}
+          <p><strong>Unmatched:</strong> <span class="label label-warning">{{len .result.UnmatchedBank}}</span></p>
         </div>
         <div class="span6">
-          <p><strong>Bank Debits:</strong> {{printf "$%.2f" .result.TotalBankDebits}}</p>
-          <p><strong>Bank Credits:</strong> {{printf "$%.2f" .result.TotalBankCredits}}</p>
-          <p><strong>Net Change:</strong> {{printf "$%.2f" (sub .result.TotalBankCredits .result.TotalBankDebits)}}</p>
+          <p><strong>Bank Debits:</strong> {{.result.BankStatement.Currency}}{{printf "%.2f" .result.TotalBankDebits}}</p>
+          <p><strong>Bank Credits:</strong> {{.result.BankStatement.Currency}}{{printf "%.2f" .result.TotalBankCredits}}</p>
+          <p><strong>Net Change:</strong> {{.result.BankStatement.Currency}}{{printf "%.2f" (sub .result.TotalBankCredits .result.TotalBankDebits)}}</p>
         </div>
       </div>
     </div>
     
-    {{ if .result.UnmatchedBank }}
-    <div class="alert alert-warning">
-      <h4><i class="icon-warning-sign"></i> Unmatched Bank Transactions ({{len .result.UnmatchedBank}})</h4>
-      <p>These transactions appear in your bank statement but not in your ledger:</p>
-      
-      <table class="table table-striped table-condensed">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Description</th>
-            <th>Debit</th>
-            <th>Credit</th>
-            <th>Net</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{ range .result.UnmatchedBank }}
-          <tr>
-            <td>{{.Date.Format "2006-01-02"}}</td>
-            <td>{{.Description}}</td>
-            <td>{{if gt .Debit 0}}{{printf "$%.2f" .Debit}}{{end}}</td>
-            <td>{{if gt .Credit 0}}{{printf "$%.2f" .Credit}}{{end}}</td>
-            <td><strong>{{printf "$%.2f" (sub .Credit .Debit)}}</strong></td>
-          </tr>
-          {{ end }}
-        </tbody>
-      </table>
-    </div>
-    {{ end }}
+    <h3>Bank Statement Transactions</h3>
+    <p><span class="label label-warning">Highlighted rows</span> are not found in your ledger file.</p>
+    
+    <table class="table table-condensed">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Debit</th>
+          <th>Credit</th>
+          <th>Net</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .result.AllBankTransactions }}
+        <tr class="{{if not .Matched}}warning{{else if eq .MatchType "fuzzy"}}info{{end}}" style="{{if not .Matched}}background-color: #fcf8e3;{{end}}">
+          <td>{{.Transaction.Date.Format "2006-01-02"}}</td>
+          <td>
+            {{.Transaction.Description}}
+            {{if .Transaction.Reference}}<br><small class="muted">{{.Transaction.Reference}}</small>{{end}}
+          </td>
+          <td>{{if gt .Transaction.Debit 0.0}}{{.Transaction.Currency}}{{printf "%.2f" .Transaction.Debit}}{{end}}</td>
+          <td>{{if gt .Transaction.Credit 0.0}}{{.Transaction.Currency}}{{printf "%.2f" .Transaction.Credit}}{{end}}</td>
+          <td><strong>{{.Transaction.Currency}}{{printf "%.2f" (sub .Transaction.Credit .Transaction.Debit)}}</strong></td>
+          <td>
+            {{ if not .Matched }}
+              <span class="label label-warning">Not in ledger</span>
+            {{ else if eq .MatchType "exact" }}
+              <span class="label label-success">Matched</span>
+            {{ else }}
+              <span class="label label-info">Fuzzy ({{printf "%.0f" (mul .MatchScore 100)}}%)</span>
+            {{ end }}
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
     
     {{ if .result.UnmatchedLedger }}
     <div class="alert alert-error">
-      <h4><i class="icon-warning-sign"></i> Unmatched Ledger Transactions ({{len .result.UnmatchedLedger}})</h4>
-      <p>These transactions appear in your ledger but not in the bank statement:</p>
+      <h4><i class="icon-warning-sign"></i> Ledger Transactions Not in Bank Statement ({{len .result.UnmatchedLedger}})</h4>
+      <p>These transactions appear in your ledger but not in the bank statement for this period:</p>
       
       <table class="table table-striped table-condensed">
         <thead>
           <tr>
             <th>Date</th>
-            <th>Description</th>
             <th>Amount</th>
-            <th>Line</th>
           </tr>
         </thead>
         <tbody>
           {{ range .result.UnmatchedLedger }}
           <tr>
             <td>{{.Date.Format "2006-01-02"}}</td>
-            <td>{{.Description}}</td>
-            <td><strong>{{printf "$%.2f" .Amount}}</strong></td>
-            <td>Line {{.LineNumber}}</td>
+            <td><strong>{{$.result.BankStatement.Currency}}{{printf "%.2f" .Amount}}</strong></td>
           </tr>
           {{ end }}
         </tbody>
@@ -85,41 +96,6 @@
 {{ end }}</pre>
       <button class="btn btn-small" onclick="copyToClipboard()">Copy to Clipboard</button>
     </div>
-    {{ end }}
-    
-    {{ if .result.Matches }}
-    <h3>Matched Transactions ({{len .result.Matches}})</h3>
-    <table class="table table-striped table-condensed">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Bank Description</th>
-          <th>Ledger Description</th>
-          <th>Amount</th>
-          <th>Match</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .result.Matches }}
-        <tr class="{{if eq .MatchType "exact"}}success{{else}}warning{{end}}">
-          <td>
-            {{.BankTransaction.Date.Format "2006-01-02"}}<br>
-            <small>{{.LedgerTransaction.Date.Format "2006-01-02"}}</small>
-          </td>
-          <td>{{.BankTransaction.Description}}</td>
-          <td>{{.LedgerTransaction.Description}}</td>
-          <td>{{printf "$%.2f" (sub .BankTransaction.Credit .BankTransaction.Debit)}}</td>
-          <td>
-            {{ if eq .MatchType "exact" }}
-              <span class="label label-success">Exact</span>
-            {{ else }}
-              <span class="label label-warning">Fuzzy ({{printf "%.0f" (mul .MatchScore 100)}}%)</span>
-            {{ end }}
-          </td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
     {{ end }}
     
     <hr>

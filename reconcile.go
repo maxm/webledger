@@ -1,12 +1,160 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 )
+
+// AccountMapping represents a mapping from description patterns to ledger accounts
+type AccountMapping struct {
+	Patterns []string `json:"patterns"`
+	Account  string   `json:"account"`
+}
+
+// AccountMappingsConfig holds all description-to-account mappings
+type AccountMappingsConfig struct {
+	DescriptionMappings []AccountMapping `json:"description_mappings"`
+}
+
+var accountMappings *AccountMappingsConfig
+
+// LoadAccountMappings loads the account mappings from the config file
+func LoadAccountMappings() {
+	// Try to load from the same directory as the executable
+	execPath, err := os.Executable()
+	if err == nil {
+		configPath := filepath.Join(filepath.Dir(execPath), "account_mappings.json")
+		if data, err := os.ReadFile(configPath); err == nil {
+			var config AccountMappingsConfig
+			if json.Unmarshal(data, &config) == nil {
+				accountMappings = &config
+				Log("Loaded %d account mappings from %s", len(config.DescriptionMappings), configPath)
+				return
+			}
+		}
+	}
+	
+	// Try current working directory
+	if data, err := os.ReadFile("account_mappings.json"); err == nil {
+		var config AccountMappingsConfig
+		if json.Unmarshal(data, &config) == nil {
+			accountMappings = &config
+			Log("Loaded %d account mappings from account_mappings.json", len(config.DescriptionMappings))
+			return
+		}
+	}
+	
+	Log("No account_mappings.json found, using defaults")
+	accountMappings = &AccountMappingsConfig{}
+}
+
+// normalizeWhitespace collapses multiple whitespaces to a single space
+func normalizeWhitespace(s string) string {
+	// Use regexp to replace multiple whitespace with single space
+	space := regexp.MustCompile(`\s+`)
+	return strings.TrimSpace(space.ReplaceAllString(s, " "))
+}
+
+// GetAccountForDescription returns the mapped account for a description, or the default
+func GetAccountForDescription(description string, isExpense bool) string {
+	if accountMappings == nil {
+		LoadAccountMappings()
+	}
+	
+	// Normalize and uppercase description for matching
+	descNormalized := strings.ToUpper(normalizeWhitespace(description))
+	
+	for _, mapping := range accountMappings.DescriptionMappings {
+		for _, pattern := range mapping.Patterns {
+			patternNormalized := strings.ToUpper(normalizeWhitespace(pattern))
+			if strings.Contains(descNormalized, patternNormalized) {
+				return mapping.Account
+			}
+		}
+	}
+	
+	// Return default account
+	if isExpense {
+		return "Expenses:Unknown"
+	}
+	return "Income:Unknown"
+}
+
+// QueryLedgerTransactions queries ledger using CLI with optional commodity/currency filter
+// Uses format: reg <account> -l "commodity == '<currency>'" -F "%(format_date(date, \"%Y-%m-%d\")) %t\n"
+func QueryLedgerTransactions(ledgerName string, account string, currency string) ([]LedgerTransaction, error) {
+	transactions := []LedgerTransaction{}
+	
+	// Build the query with commodity filter
+	// Note: We use %t for total amount and format_date for YYYY-MM-DD format
+	// Using single quotes around the -l and -F arguments to avoid shell escaping issues
+	var query string
+	if currency != "" {
+		// Inside single quotes, $ doesn't need escaping for shell, but ledger needs \$ for regex
+		query = fmt.Sprintf(`reg %s -l 'commodity == "\%s"' -F '%%(format_date(date, "%%Y-%%m-%%d")) %%t
+'`, account, currency)
+	} else {
+		query = fmt.Sprintf(`reg %s -F '%%(format_date(date, "%%Y-%%m-%%d")) %%t
+'`, account)
+	}
+	
+	output := LedgerExec(ledgerName, query)
+	if output == "" {
+		return transactions, nil
+	}
+	
+	// Parse output: each line is "date amount"
+	// Example: 2025/01/15 $1,234.56
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	dateRegex := regexp.MustCompile(`^(\d{4}[/-]\d{1,2}[/-]\d{1,2})\s+(.+)$`)
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		matches := dateRegex.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+		
+		dateStr := matches[1]
+		amountStr := strings.TrimSpace(matches[2])
+		
+		// Parse date
+		var date time.Time
+		var err error
+		for _, format := range []string{"2006/01/02", "2006-01-02"} {
+			date, err = time.Parse(format, dateStr)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			continue
+		}
+		
+		// Parse amount
+		amount := parseLedgerAmount(amountStr)
+		
+		transaction := LedgerTransaction{
+			Date:    date,
+			Account: account,
+			Amount:  amount,
+		}
+		
+		transactions = append(transactions, transaction)
+	}
+	
+	return transactions, nil
+}
 
 // LedgerTransaction represents a transaction parsed from a ledger file
 type LedgerTransaction struct {
@@ -26,11 +174,21 @@ type ReconciliationMatch struct {
 	MatchType         string // "exact", "fuzzy", "none"
 }
 
+// BankTransactionWithStatus represents a bank transaction with its reconciliation status
+type BankTransactionWithStatus struct {
+	Transaction       BankTransaction
+	Matched           bool
+	MatchType         string // "exact", "fuzzy", ""
+	MatchScore        float64
+	LedgerTransaction *LedgerTransaction
+}
+
 // ReconciliationResult represents the complete reconciliation result
 type ReconciliationResult struct {
 	Matches             []ReconciliationMatch
 	UnmatchedBank       []BankTransaction
 	UnmatchedLedger     []LedgerTransaction
+	AllBankTransactions []BankTransactionWithStatus
 	BankStatement       *BankStatement
 	DateRange           string
 	TotalBankDebits     float64
@@ -118,6 +276,8 @@ func ParseLedgerTransactions(ledgerContent string, account string) ([]LedgerTran
 }
 
 // parseLedgerAmount parses an amount from a ledger entry
+// Ledger CLI outputs amounts in US format: comma as thousands separator, dot as decimal
+// Example: "$ 100,000.00" or "US$ -2,500.00"
 func parseLedgerAmount(amountStr string) float64 {
 	// Remove currency symbols
 	amountStr = strings.TrimSpace(amountStr)
@@ -125,24 +285,9 @@ func parseLedgerAmount(amountStr string) float64 {
 	amountStr = strings.ReplaceAll(amountStr, "US", "")
 	amountStr = strings.ReplaceAll(amountStr, " ", "")
 	
-	// Handle thousand separators
-	dotCount := strings.Count(amountStr, ".")
-	commaCount := strings.Count(amountStr, ",")
-	
-	if commaCount > 0 && dotCount > 0 {
-		// Both present - dots are thousands, comma is decimal
-		amountStr = strings.ReplaceAll(amountStr, ".", "")
-		amountStr = strings.ReplaceAll(amountStr, ",", ".")
-	} else if commaCount == 1 && dotCount == 0 {
-		// Only comma - it's the decimal separator
-		amountStr = strings.ReplaceAll(amountStr, ",", ".")
-	} else if dotCount > 1 {
-		// Multiple dots - they're thousand separators
-		amountStr = strings.ReplaceAll(amountStr, ".", "")
-	} else if commaCount > 1 {
-		// Multiple commas - they're thousand separators
-		amountStr = strings.ReplaceAll(amountStr, ",", "")
-	}
+	// Ledger uses US format: comma for thousands, dot for decimal
+	// Simply remove all commas (they're thousand separators)
+	amountStr = strings.ReplaceAll(amountStr, ",", "")
 	
 	// Parse amount
 	var amount float64
@@ -184,7 +329,7 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 	matchedBank := make(map[int]bool)
 	matchedLedger := make(map[int]bool)
 	
-	// First pass: exact matches (date + amount)
+	// First pass: exact matches (same date + same amount)
 	for bi, bt := range statement.Transactions {
 		if matchedBank[bi] {
 			continue
@@ -197,9 +342,11 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 				continue
 			}
 			
-			// Check if dates are within 3 days of each other
-			daysDiff := math.Abs(bt.Date.Sub(lt.Date).Hours() / 24)
-			if daysDiff > 3 {
+			// Check if dates match exactly
+			sameDate := bt.Date.Year() == lt.Date.Year() &&
+				bt.Date.Month() == lt.Date.Month() &&
+				bt.Date.Day() == lt.Date.Day()
+			if !sameDate {
 				continue
 			}
 			
@@ -221,57 +368,40 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 		}
 	}
 	
-	// Second pass: fuzzy matches (date + similar amount + similar description)
+	// Second pass: fuzzy matches (date within 2 days + same amount)
 	for bi, bt := range statement.Transactions {
 		if matchedBank[bi] {
 			continue
 		}
 		
 		bankAmount := bt.Credit - bt.Debit
-		bestMatchIndex := -1
-		bestMatchScore := 0.0
 		
 		for li, lt := range ledgerTransactions {
 			if matchedLedger[li] {
 				continue
 			}
 			
-			// Check date proximity (within 5 days)
+			// Check date proximity (within 2 days)
 			daysDiff := math.Abs(bt.Date.Sub(lt.Date).Hours() / 24)
-			if daysDiff > 5 {
+			if daysDiff > 2 {
 				continue
 			}
 			
-			// Check amount similarity (within 5% or $10)
+			// Check if amounts match (allowing for small rounding differences)
 			amountDiff := math.Abs(bankAmount - lt.Amount)
-			amountThreshold := math.Max(10.0, math.Abs(bankAmount)*0.05)
-			if amountDiff > amountThreshold {
-				continue
+			if amountDiff < 0.01 {
+				// Fuzzy match (date within 2 days)
+				match := ReconciliationMatch{
+					BankTransaction:   &statement.Transactions[bi],
+					LedgerTransaction: &ledgerTransactions[li],
+					MatchScore:        1.0 - (daysDiff / 3.0), // Score based on date proximity
+					MatchType:         "fuzzy",
+				}
+				result.Matches = append(result.Matches, match)
+				matchedBank[bi] = true
+				matchedLedger[li] = true
+				break
 			}
-			
-			// Calculate match score
-			dateScore := 1.0 - (daysDiff / 5.0)
-			amountScore := 1.0 - (amountDiff / amountThreshold)
-			descScore := CompareTransactionDescriptions(bt.Description, lt.Description)
-			
-			totalScore := (dateScore*0.3 + amountScore*0.5 + descScore*0.2)
-			
-			if totalScore > bestMatchScore && totalScore > 0.6 {
-				bestMatchScore = totalScore
-				bestMatchIndex = li
-			}
-		}
-		
-		if bestMatchIndex >= 0 {
-			match := ReconciliationMatch{
-				BankTransaction:   &statement.Transactions[bi],
-				LedgerTransaction: &ledgerTransactions[bestMatchIndex],
-				MatchScore:        bestMatchScore,
-				MatchType:         "fuzzy",
-			}
-			result.Matches = append(result.Matches, match)
-			matchedBank[bi] = true
-			matchedLedger[bestMatchIndex] = true
 		}
 	}
 	
@@ -282,20 +412,100 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 		}
 	}
 	
+	// Collect unmatched ledger transactions within the bank statement date range
 	for li, lt := range ledgerTransactions {
-		if !matchedLedger[li] {
-			result.UnmatchedLedger = append(result.UnmatchedLedger, lt)
+		if matchedLedger[li] {
+			continue
 		}
+		// Only include ledger transactions within the bank statement date range
+		if !statement.StartDate.IsZero() && lt.Date.Before(statement.StartDate) {
+			continue
+		}
+		if !statement.EndDate.IsZero() && lt.Date.After(statement.EndDate) {
+			continue
+		}
+		result.UnmatchedLedger = append(result.UnmatchedLedger, lt)
+	}
+	
+	// Build AllBankTransactions with status for each transaction
+	for bi, bt := range statement.Transactions {
+		txWithStatus := BankTransactionWithStatus{
+			Transaction: bt,
+			Matched:     matchedBank[bi],
+		}
+		
+		// Find the match details if matched
+		if matchedBank[bi] {
+			for _, match := range result.Matches {
+				if match.BankTransaction.Date == bt.Date &&
+					match.BankTransaction.Description == bt.Description &&
+					match.BankTransaction.Debit == bt.Debit &&
+					match.BankTransaction.Credit == bt.Credit {
+					txWithStatus.MatchType = match.MatchType
+					txWithStatus.MatchScore = match.MatchScore
+					txWithStatus.LedgerTransaction = match.LedgerTransaction
+					break
+				}
+			}
+		}
+		
+		result.AllBankTransactions = append(result.AllBankTransactions, txWithStatus)
 	}
 	
 	return result
 }
 
+// groupedTransaction holds transactions grouped by date and counterpart account
+type groupedTransaction struct {
+	Date           time.Time
+	BankAccount    string
+	CounterAccount string
+	Currency       string
+	Transactions   []BankTransaction
+}
+
 // GenerateLedgerEntries generates suggested ledger entries for unmatched bank transactions
+// Groups transactions by date and counterpart account into single entries
 func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 	entries := []string{}
 	
+	// Group transactions by date + bank account + counter account (only for known accounts)
+	groups := make(map[string]*groupedTransaction)
+	var ungroupedTransactions []BankTransaction
+	
 	for _, tx := range unmatchedTransactions {
+		amount := tx.Credit - tx.Debit
+		isExpense := amount < 0
+		counterAccount := GetAccountForDescription(tx.Description, isExpense)
+		
+		currency := tx.Currency
+		if currency == "" {
+			currency = "$"
+		}
+		
+		// Only group if it's a known account (not Unknown)
+		if strings.Contains(counterAccount, "Unknown") {
+			ungroupedTransactions = append(ungroupedTransactions, tx)
+			continue
+		}
+		
+		// Create a key for grouping: date + bank account + counter account
+		key := fmt.Sprintf("%s|%s|%s", tx.Date.Format("2006/01/02"), tx.Account, counterAccount)
+		
+		if groups[key] == nil {
+			groups[key] = &groupedTransaction{
+				Date:           tx.Date,
+				BankAccount:    tx.Account,
+				CounterAccount: counterAccount,
+				Currency:       currency,
+				Transactions:   []BankTransaction{},
+			}
+		}
+		groups[key].Transactions = append(groups[key].Transactions, tx)
+	}
+	
+	// Generate individual entries for ungrouped (unknown account) transactions
+	for _, tx := range ungroupedTransactions {
 		dateStr := tx.Date.Format("2006/01/02")
 		desc := strings.TrimSpace(tx.Description)
 		if tx.Reference != "" {
@@ -303,18 +513,65 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 		}
 		
 		amount := tx.Credit - tx.Debit
-		var amountStr string
-		if amount >= 0 {
-			amountStr = fmt.Sprintf("$%.2f", amount)
-		} else {
-			amountStr = fmt.Sprintf("$%.2f", amount)
+		currency := tx.Currency
+		if currency == "" {
+			currency = "$"
 		}
 		
-		// Generate entry
-		entry := fmt.Sprintf("%s %s\n  %s  %s\n  Expenses:Unknown\n",
-			dateStr, desc, tx.Account, amountStr)
+		isExpense := amount < 0
+		counterAccount := "Expenses:Unknown"
+		if !isExpense {
+			counterAccount = "Income:Unknown"
+		}
 		
+		entry := fmt.Sprintf("%s %s\n  %s  %s%.2f\n  %s\n",
+			dateStr, desc, tx.Account, currency, amount, counterAccount)
 		entries = append(entries, entry)
+	}
+	
+	// Generate entries for each group
+	for _, group := range groups {
+		var entry strings.Builder
+		
+		// Build description from all transactions
+		var descriptions []string
+		for _, tx := range group.Transactions {
+			desc := strings.TrimSpace(tx.Description)
+			if tx.Reference != "" {
+				desc = desc + " - " + tx.Reference
+			}
+			descriptions = append(descriptions, desc)
+		}
+		
+		dateStr := group.Date.Format("2006/01/02")
+		
+		// Use first description as main, or combine if multiple
+		mainDesc := descriptions[0]
+		if len(descriptions) > 1 {
+			mainDesc = descriptions[0] + " (+" + fmt.Sprintf("%d", len(descriptions)-1) + " more)"
+		}
+		
+		entry.WriteString(fmt.Sprintf("%s %s\n", dateStr, mainDesc))
+		
+		// Add each bank transaction line
+		for _, tx := range group.Transactions {
+			amount := tx.Credit - tx.Debit
+			entry.WriteString(fmt.Sprintf("  %s  %s%.2f", group.BankAccount, group.Currency, amount))
+			// Add comment with description if there are multiple transactions
+			if len(group.Transactions) > 1 {
+				shortDesc := strings.TrimSpace(tx.Description)
+				if len(shortDesc) > 30 {
+					shortDesc = shortDesc[:30] + "..."
+				}
+				entry.WriteString(fmt.Sprintf("  ; %s", shortDesc))
+			}
+			entry.WriteString("\n")
+		}
+		
+		// Add the counterpart account line
+		entry.WriteString(fmt.Sprintf("  %s\n", group.CounterAccount))
+		
+		entries = append(entries, entry.String())
 	}
 	
 	return entries
@@ -324,17 +581,23 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 func FormatReconciliationSummary(result *ReconciliationResult) string {
 	var summary strings.Builder
 	
+	currency := result.BankStatement.Currency
+	if currency == "" {
+		currency = "$"
+	}
+	
 	summary.WriteString("Bank Reconciliation Summary\n")
 	summary.WriteString("===========================\n\n")
 	
 	summary.WriteString(fmt.Sprintf("Account: %s\n", result.BankStatement.Account))
+	summary.WriteString(fmt.Sprintf("Currency: %s\n", currency))
 	summary.WriteString(fmt.Sprintf("Period: %s\n\n", result.DateRange))
 	
 	summary.WriteString("Totals:\n")
-	summary.WriteString(fmt.Sprintf("  Bank Debits:   %s\n", FormatCurrency(result.TotalBankDebits)))
-	summary.WriteString(fmt.Sprintf("  Bank Credits:  %s\n", FormatCurrency(result.TotalBankCredits)))
-	summary.WriteString(fmt.Sprintf("  Ledger Debits: %s\n", FormatCurrency(result.TotalLedgerDebits)))
-	summary.WriteString(fmt.Sprintf("  Ledger Credits:%s\n\n", FormatCurrency(result.TotalLedgerCredits)))
+	summary.WriteString(fmt.Sprintf("  Bank Debits:   %s%.2f\n", currency, result.TotalBankDebits))
+	summary.WriteString(fmt.Sprintf("  Bank Credits:  %s%.2f\n", currency, result.TotalBankCredits))
+	summary.WriteString(fmt.Sprintf("  Ledger Debits: %s%.2f\n", currency, result.TotalLedgerDebits))
+	summary.WriteString(fmt.Sprintf("  Ledger Credits:%s%.2f\n\n", currency, result.TotalLedgerCredits))
 	
 	summary.WriteString(fmt.Sprintf("Matched Transactions: %d\n", len(result.Matches)))
 	summary.WriteString(fmt.Sprintf("  - Exact matches: %d\n", countMatchType(result.Matches, "exact")))
