@@ -13,6 +13,7 @@ import (
 	"context"
 	"io/ioutil"
 	"bytes"
+	"os"
 )
 
 type CookieData struct {
@@ -22,20 +23,60 @@ type CookieData struct {
 
 var validCookies []CookieData = []CookieData{}
 
-var oauthconfig = &oauth2.Config{
-	ClientID:     ClientId,
-	ClientSecret: ClientSecret,
-	Scopes:        []string{"https://www.googleapis.com/auth/userinfo.email"},
-	Endpoint: google.Endpoint,
-	RedirectURL:  "https://max.uy/ledger/oauthcallback",
-	// RedirectURL: "http://localhost:8082/oauthcallback",
+// isLocalEnvironment checks if we're running in a local development environment
+func isLocalEnvironment() bool {
+	// Check for environment variable first
+	if env := os.Getenv("WEBLEDGER_ENV"); env == "production" {
+		return false
+	} else if env == "local" || env == "development" {
+		return true
+	}
+	
+	// Check hostname - if it contains "localhost" or is a local IP, assume local
+	hostname, err := os.Hostname()
+	if err == nil {
+		hostnameUpper := strings.ToLower(hostname)
+		if strings.Contains(hostnameUpper, "localhost") || 
+		   strings.Contains(hostnameUpper, "macbook") ||
+		   strings.Contains(hostnameUpper, "local") {
+			return true
+		}
+	}
+	
+	// Default to production for safety
+	return false
 }
+
+var oauthconfig *oauth2.Config
+var RootPath string
 
 const oauthGoogleUrlAPI = "https://www.googleapis.com/oauth2/v2/userinfo?access_token="
 
-var RootPath = "/ledger"
-
-// var RootPath = "http://localhost:8082"
+func initConfig() {
+	if isLocalEnvironment() {
+		// Local development settings
+		RootPath = ""
+		oauthconfig = &oauth2.Config{
+			ClientID:     ClientId,
+			ClientSecret: ClientSecret,
+			Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
+			Endpoint:     google.Endpoint,
+			RedirectURL:  "http://localhost:8082/oauthcallback",
+		}
+		Log("Running in LOCAL mode")
+	} else {
+		// Production settings
+		RootPath = "/ledger"
+		oauthconfig = &oauth2.Config{
+			ClientID:     ClientId,
+			ClientSecret: ClientSecret,
+			Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
+			Endpoint:     google.Endpoint,
+			RedirectURL:  "https://max.uy/ledger/oauthcallback",
+		}
+		Log("Running in PRODUCTION mode")
+	}
+}
 
 func Log(message string, a ...interface{}) {
 	message = fmt.Sprintf(message, a...)
@@ -348,6 +389,7 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	initConfig()
 	InitLedgers()
 	InitTemplates()
 
