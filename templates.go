@@ -8,6 +8,19 @@ import (
 
 var templates map[string]*template.Template
 
+// Template functions
+var templateFuncs = template.FuncMap{
+  "add": func(a, b float64) float64 { return a + b },
+  "sub": func(a, b float64) float64 { return a - b },
+  "mul": func(a, b float64) float64 { return a * b },
+  "div": func(a, b float64) float64 {
+    if b == 0 {
+      return 0
+    }
+    return a / b
+  },
+}
+
 func InitTemplates() {
   if templates == nil {
     templates = make(map[string]*template.Template)
@@ -26,7 +39,7 @@ func InitTemplates() {
   // Generate our templates map from our layouts/ and includes/ directories
   for _, view := range views {
     files := append(layouts, view)
-    templates[filepath.Base(view)] = template.Must(template.ParseFiles(files...))
+    templates[filepath.Base(view)] = template.Must(template.New(filepath.Base(view)).Funcs(templateFuncs).ParseFiles(files...))
   }
 }
 

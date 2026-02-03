@@ -12,6 +12,7 @@ import (
 	"time"
 	"context"
 	"io/ioutil"
+	"bytes"
 )
 
 type CookieData struct {
@@ -242,6 +243,110 @@ func logout(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Logout"))
 }
 
+func handleReconcile(w http.ResponseWriter, r *http.Request) {
+	ledger := mux.Vars(r)["ledger"]
+	email := GetCookie(r).Email
+	data := map[string]interface{}{
+		"ledger":  ledger,
+		"ledgers": AuthLedgers(email),
+		"email":   email,
+		"root":    RootPath,
+	}
+	RenderTemplate(w, "reconcile", data)
+}
+
+func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
+	ledger := mux.Vars(r)["ledger"]
+	
+	// Parse multipart form
+	err := r.ParseMultipartForm(10 << 20) // 10 MB max
+	if err != nil {
+		http.Error(w, "Error parsing form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	file, header, err := r.FormFile("statement")
+	if err != nil {
+		http.Error(w, "Error retrieving file: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	
+	// Read file into memory
+	fileBytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		http.Error(w, "Error reading file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Detect bank from filename or form parameter
+	bankAccount := r.FormValue("account")
+	if bankAccount == "" {
+		bankAccount = DetectBankFromFilename(header.Filename)
+	}
+	if bankAccount == "" {
+		http.Error(w, "Could not detect bank account. Please select manually.", http.StatusBadRequest)
+		return
+	}
+	
+	// Parse bank statement
+	var statement *BankStatement
+	fileExtension := strings.ToLower(header.Filename[strings.LastIndex(header.Filename, ".")+1:])
+	
+	if fileExtension == "xls" || fileExtension == "xlsx" {
+		reader := bytes.NewReader(fileBytes)
+		
+		if strings.Contains(bankAccount, "BROU") {
+			statement, err = ParseBrouStatement(reader)
+		} else if strings.Contains(bankAccount, "Itau") {
+			statement, err = ParseItauStatement(reader)
+		} else {
+			http.Error(w, "Unknown bank account type", http.StatusBadRequest)
+			return
+		}
+		
+		if err != nil {
+			http.Error(w, "Error parsing statement: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else if fileExtension == "csv" {
+		reader := bytes.NewReader(fileBytes)
+		statement, err = ParseBankStatementCSV(reader, bankAccount)
+		if err != nil {
+			http.Error(w, "Error parsing CSV: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		http.Error(w, "Unsupported file format. Please upload .xls or .csv", http.StatusBadRequest)
+		return
+	}
+	
+	// Parse ledger transactions for this account
+	ledgerContent := ReadLedger(ledger)
+	ledgerTransactions, err := ParseLedgerTransactions(ledgerContent, bankAccount)
+	if err != nil {
+		http.Error(w, "Error parsing ledger: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Perform reconciliation
+	result := ReconcileBankStatement(statement, ledgerTransactions)
+	
+	// Prepare data for template
+	email := GetCookie(r).Email
+	data := map[string]interface{}{
+		"ledger":          ledger,
+		"ledgers":         AuthLedgers(email),
+		"email":           email,
+		"root":            RootPath,
+		"result":          result,
+		"bankAccount":     bankAccount,
+		"suggestedEntries": GenerateLedgerEntries(result.UnmatchedBank),
+	}
+	
+	RenderTemplate(w, "reconcile_result", data)
+}
+
 func main() {
 	InitLedgers()
 	InitTemplates()
@@ -266,6 +371,8 @@ func main() {
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/raw", handleLogin(handleRaw)).Methods("GET")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/append", handleLogin(handleAppend)).Methods("POST")
 	router.HandleFunc("/{ledger:"+ledgers_regex+"}/monthly", handleLogin(handleWithTemplateAndData("monthly", monthlyData))).Methods("GET")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/reconcile", handleLogin(handleReconcile)).Methods("GET")
+	router.HandleFunc("/{ledger:"+ledgers_regex+"}/reconcile", handleLogin(handleReconcileUpload)).Methods("POST")
 	router.Handle("/{path:.*}", http.FileServer(http.Dir("public")))
 	http.Handle("/", router)
 	http.ListenAndServe(":8082", nil)

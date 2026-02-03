@@ -28,6 +28,10 @@
             <form class="navbar-search pull-left" method="get" action="{{.root}}/{{.ledger}}/query">
               <input type="text" class="search-query" name="query" value="{{ .query }}" placeholder="Query">
             </form>
+            <ul class="nav">
+              <li><a href="{{.root}}/{{.ledger}}/monthly">Monthly</a></li>
+              <li><a href="{{.root}}/{{.ledger}}/reconcile">Reconcile</a></li>
+            </ul>
           {{ end }}
           
           <ul class="nav pull-right">

@@ -1,0 +1,47 @@
+{{ define "content" }}
+<div class="row">
+  <div class="span12">
+    <h2>Bank Statement Reconciliation</h2>
+    <p>Upload a bank statement to reconcile with your ledger entries.</p>
+    
+    <form method="post" enctype="multipart/form-data" class="form-horizontal">
+      <div class="control-group">
+        <label class="control-label" for="account">Bank Account</label>
+        <div class="controls">
+          <select name="account" id="account" class="input-xlarge">
+            <option value="">Auto-detect from filename</option>
+            <option value="Assets:Bank:BROU">BROU (Assets:Bank:BROU)</option>
+            <option value="Assets:Bank:Itau">Itau (Assets:Bank:Itau)</option>
+          </select>
+          <span class="help-block">Select the bank account or leave blank to auto-detect</span>
+        </div>
+      </div>
+      
+      <div class="control-group">
+        <label class="control-label" for="statement">Bank Statement File</label>
+        <div class="controls">
+          <input type="file" name="statement" id="statement" accept=".xls,.xlsx,.csv" required>
+          <span class="help-block">Upload .xls or .csv file from your bank</span>
+        </div>
+      </div>
+      
+      <div class="control-group">
+        <div class="controls">
+          <button type="submit" class="btn btn-primary">Reconcile</button>
+        </div>
+      </div>
+    </form>
+    
+    <hr>
+    
+    <div class="alert alert-info">
+      <h4>Supported Bank Formats:</h4>
+      <ul>
+        <li><strong>BROU:</strong> "Detalle_Movimiento_Cuenta" .xls files</li>
+        <li><strong>Itau:</strong> "Estado_De_Cuenta" .xls files</li>
+        <li><strong>CSV:</strong> Generic CSV format with Date, Description, Debit, Credit columns</li>
+      </ul>
+    </div>
+  </div>
+</div>
+{{ end }}
