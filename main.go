@@ -343,6 +343,7 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 	
 	// Parse bank statement
 	var statement *BankStatement
+	var statements []*BankStatement // For PDF files that may return multiple statements
 	fileExtension := strings.ToLower(header.Filename[strings.LastIndex(header.Filename, ".")+1:])
 	
 	if fileExtension == "xls" || fileExtension == "xlsx" {
@@ -361,6 +362,7 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error parsing statement: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		statements = []*BankStatement{statement}
 	} else if fileExtension == "csv" {
 		reader := bytes.NewReader(fileBytes)
 		statement, err = ParseBankStatementCSV(reader, bankAccount)
@@ -368,8 +370,88 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error parsing CSV: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		statements = []*BankStatement{statement}
+	} else if fileExtension == "pdf" {
+		// PDF files - currently only Visa Itau credit card statements
+		reader := bytes.NewReader(fileBytes)
+		statements, err = ParseVisaItauStatement(reader, int64(len(fileBytes)))
+		if err != nil {
+			http.Error(w, "Error parsing PDF: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(statements) > 0 {
+			statement = statements[0] // Use first statement for backwards compatibility
+		}
 	} else {
-		http.Error(w, "Unsupported file format. Please upload .xls or .csv", http.StatusBadRequest)
+		http.Error(w, "Unsupported file format. Please upload .xls, .csv, or .pdf", http.StatusBadRequest)
+		return
+	}
+	
+	// If we have multiple statements (e.g., Pesos and Dollars from Visa), render a combined result
+	if len(statements) > 1 {
+		// Combine results from all statements
+		var allBankTransactions []BankTransactionWithStatus
+		var allUnmatchedBank []BankTransaction
+		var allUnmatchedLedger []LedgerTransaction
+		var allMatches []ReconciliationMatch
+		var totalBankDebits, totalBankCredits float64
+		var minDate, maxDate time.Time
+
+		for _, stmt := range statements {
+			ledgerTransactions, err := QueryLedgerTransactions(ledger, stmt.Account, stmt.Currency)
+			if err != nil {
+				http.Error(w, "Error querying ledger: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			result := ReconcileBankStatement(stmt, ledgerTransactions)
+			allBankTransactions = append(allBankTransactions, result.AllBankTransactions...)
+			allUnmatchedBank = append(allUnmatchedBank, result.UnmatchedBank...)
+			allUnmatchedLedger = append(allUnmatchedLedger, result.UnmatchedLedger...)
+			allMatches = append(allMatches, result.Matches...)
+			totalBankDebits += result.TotalBankDebits
+			totalBankCredits += result.TotalBankCredits
+
+			if minDate.IsZero() || stmt.StartDate.Before(minDate) {
+				minDate = stmt.StartDate
+			}
+			if maxDate.IsZero() || stmt.EndDate.After(maxDate) {
+				maxDate = stmt.EndDate
+			}
+		}
+
+		// Create a synthetic combined statement for the template
+		combinedStatement := &BankStatement{
+			Account:      bankAccount,
+			Currency:     "", // Mixed currencies
+			Transactions: allUnmatchedBank,
+			StartDate:    minDate,
+			EndDate:      maxDate,
+		}
+
+		combinedResult := &ReconciliationResult{
+			AllBankTransactions: allBankTransactions,
+			UnmatchedBank:       allUnmatchedBank,
+			UnmatchedLedger:     allUnmatchedLedger,
+			Matches:             allMatches,
+			BankStatement:       combinedStatement,
+			DateRange:           minDate.Format("2006-01-02") + " to " + maxDate.Format("2006-01-02"),
+			TotalBankDebits:     totalBankDebits,
+			TotalBankCredits:    totalBankCredits,
+		}
+
+		email := GetCookie(r).Email
+		data := map[string]interface{}{
+			"ledger":           ledger,
+			"ledgers":          AuthLedgers(email),
+			"email":            email,
+			"root":             RootPath,
+			"result":           combinedResult,
+			"bankAccount":      bankAccount,
+			"suggestedEntries": GenerateLedgerEntries(allUnmatchedBank),
+		}
+
+		RenderTemplate(w, "reconcile_result", data)
 		return
 	}
 	

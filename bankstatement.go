@@ -4,11 +4,14 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/extrame/xls"
+	"github.com/ledongthuc/pdf"
 )
 
 // BankTransaction represents a single transaction from a bank statement
@@ -651,6 +654,11 @@ func DetectBankFromFilename(filename string) string {
 		return "Assets:Bank:Itau"
 	}
 	
+	// Visa Itau statements are PDF files with numeric names like 0399723.pdf
+	if strings.HasSuffix(filenameLower, ".pdf") {
+		return "Assets:VisaItau"
+	}
+	
 	return ""
 }
 
@@ -668,4 +676,232 @@ func FormatCurrencyWithSymbol(amount float64, currency string) string {
 		return fmt.Sprintf("-%s%.2f", currency, -amount)
 	}
 	return fmt.Sprintf("%s%.2f", currency, amount)
+}
+
+// ParseVisaItauStatement parses a Visa Itau credit card statement PDF file
+// Returns two statements: one for Pesos, one for US Dollars
+func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, error) {
+	pdfReader, err := pdf.NewReader(reader, size)
+	if err != nil {
+		return nil, fmt.Errorf("error opening PDF file: %v", err)
+	}
+
+	pesoStatement := &BankStatement{
+		Account:      "Assets:VisaItau",
+		Currency:     "$",
+		Transactions: []BankTransaction{},
+	}
+
+	dollarStatement := &BankStatement{
+		Account:      "Assets:VisaItau",
+		Currency:     "US$",
+		Transactions: []BankTransaction{},
+	}
+
+	// Date pattern: DD MM YY
+	datePattern := regexp.MustCompile(`^\s*(\d{2})\s+(\d{2})\s+(\d{2})\s+`)
+	// Amount pattern: numbers with comma as decimal separator, optional negative
+	amountPattern := regexp.MustCompile(`-?\d+(?:\.\d{3})*,\d{2}`)
+
+	for pageNum := 1; pageNum <= pdfReader.NumPage(); pageNum++ {
+		page := pdfReader.Page(pageNum)
+		if page.V.IsNull() {
+			continue
+		}
+
+		texts := page.Content().Text
+
+		// Sort texts by Y (descending = top to bottom), then X
+		sort.Slice(texts, func(i, j int) bool {
+			if texts[i].Y != texts[j].Y {
+				return texts[i].Y > texts[j].Y
+			}
+			return texts[i].X < texts[j].X
+		})
+
+		// Group texts into lines
+		type textLine struct {
+			y     float64
+			texts []pdf.Text
+		}
+		var lines []textLine
+		var currentLine textLine
+		currentLine.y = -1
+
+		for _, t := range texts {
+			if currentLine.y < 0 {
+				currentLine.y = t.Y
+				currentLine.texts = []pdf.Text{t}
+			} else if currentLine.y-t.Y > 3 { // new line threshold
+				if len(currentLine.texts) > 0 {
+					lines = append(lines, currentLine)
+				}
+				currentLine = textLine{y: t.Y, texts: []pdf.Text{t}}
+			} else {
+				currentLine.texts = append(currentLine.texts, t)
+			}
+		}
+		if len(currentLine.texts) > 0 {
+			lines = append(lines, currentLine)
+		}
+
+		// Process each line
+		for _, line := range lines {
+			// Sort texts in line by X position
+			sort.Slice(line.texts, func(i, j int) bool {
+				return line.texts[i].X < line.texts[j].X
+			})
+
+			// Reconstruct full line text
+			var fullText strings.Builder
+			for _, t := range line.texts {
+				fullText.WriteString(t.S)
+			}
+			lineStr := fullText.String()
+
+			// Check if this is a transaction line (starts with date)
+			if !datePattern.MatchString(lineStr) {
+				continue
+			}
+
+			// Extract date
+			dateMatch := datePattern.FindStringSubmatch(lineStr)
+			if dateMatch == nil {
+				continue
+			}
+			day, _ := strconv.Atoi(dateMatch[1])
+			month, _ := strconv.Atoi(dateMatch[2])
+			year, _ := strconv.Atoi(dateMatch[3])
+			year += 2000 // Convert YY to YYYY
+
+			date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+
+			// Extract description - text after date and before amounts
+			// Remove the date portion first
+			lineAfterDate := datePattern.ReplaceAllString(lineStr, "")
+
+			// Find all amounts in the line
+			amounts := amountPattern.FindAllString(lineAfterDate, -1)
+
+			// Extract description - everything before the first amount
+			description := lineAfterDate
+			if len(amounts) > 0 {
+				firstAmountIdx := strings.Index(lineAfterDate, amounts[0])
+				if firstAmountIdx > 0 {
+					description = strings.TrimSpace(lineAfterDate[:firstAmountIdx])
+				}
+			}
+
+			// Clean up description - remove reference code if present
+			descParts := strings.SplitN(description, " ", 2)
+			if len(descParts) == 2 && len(descParts[0]) == 4 {
+				// First part is likely a 4-digit reference code
+				_, err := strconv.Atoi(descParts[0])
+				if err == nil {
+					description = strings.TrimSpace(descParts[1])
+				}
+			}
+
+			// The PDF has multiple amount columns:
+			// 1. Origin amount (original currency) - we want to IGNORE this
+			// 2. Statement amount in pesos or dollars - this is the LAST amount in the line
+			// 
+			// We take the LAST amount found in the line as that's the statement amount
+			var statementAmount float64
+			if len(amounts) > 0 {
+				// Use the last amount in the line (statement amount)
+				statementAmount = parseVisaAmount(amounts[len(amounts)-1])
+			}
+
+			// Skip if no valid amount found
+			if statementAmount == 0 {
+				continue
+			}
+
+			// Determine currency based on line length:
+			// - len >= 115: Dollar transactions (has both origin and dollar amount columns)
+			// - len < 115: Peso transactions (shorter lines, peso-only column)
+			lineLen := len(lineStr)
+			isDollar := lineLen >= 115
+
+			// Create transaction
+			tx := BankTransaction{
+				Date:        date,
+				Description: description,
+				Account:     "Assets:VisaItau",
+			}
+
+			if isDollar {
+				tx.Currency = "US$"
+			} else {
+				tx.Currency = "$"
+			}
+
+			// For credit cards: positive amounts are charges (debits)
+			// Negative amounts are credits/payments
+			if statementAmount < 0 {
+				tx.Credit = -statementAmount
+				tx.Debit = 0
+			} else {
+				tx.Debit = statementAmount
+				tx.Credit = 0
+			}
+
+			// Add to appropriate statement
+			var targetStatement *BankStatement
+			if isDollar {
+				targetStatement = dollarStatement
+			} else {
+				targetStatement = pesoStatement
+			}
+
+			targetStatement.Transactions = append(targetStatement.Transactions, tx)
+
+			if targetStatement.StartDate.IsZero() || date.Before(targetStatement.StartDate) {
+				targetStatement.StartDate = date
+			}
+			if targetStatement.EndDate.IsZero() || date.After(targetStatement.EndDate) {
+				targetStatement.EndDate = date
+			}
+		}
+	}
+
+	var result []*BankStatement
+	if len(pesoStatement.Transactions) > 0 {
+		result = append(result, pesoStatement)
+	}
+	if len(dollarStatement.Transactions) > 0 {
+		result = append(result, dollarStatement)
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no transactions found in PDF")
+	}
+
+	return result, nil
+}
+
+// parseVisaAmount parses an amount string from a Visa statement (European format: 1.234,56)
+func parseVisaAmount(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	
+	negative := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	
+	// Remove thousands separators (periods) and convert decimal comma to period
+	s = strings.ReplaceAll(s, ".", "")
+	s = strings.ReplaceAll(s, ",", ".")
+	
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	
+	if negative {
+		return -val
+	}
+	return val
 }
