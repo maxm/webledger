@@ -4,3 +4,5 @@ webledger
 repos/
 build/
 .DS_Store
+sample_bank_statements/*
+webledger_test
