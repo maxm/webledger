@@ -263,6 +263,7 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 
 	var headerRow int = -1
 	var dateCol, conceptCol, debitCol, creditCol, balanceCol, refCol int = -1, -1, -1, -1, -1, -1
+	var monedaCol int = -1 // Track the "Moneda" column to get currency from next row
 
 	maxRow := int(sheet.MaxRow)
 	
@@ -301,11 +302,19 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 			cellRaw := strings.TrimSpace(cellValue)
 			cellStr := strings.ToLower(cellRaw)
 			
-			// Detect currency from "Moneda" field or currency indicators
-			if strings.Contains(cellStr, "moneda") || strings.Contains(cellStr, "currency") {
-				if strings.Contains(cellRaw, "US$") || strings.Contains(cellStr, "dolar") || strings.Contains(cellStr, "usd") {
+			// Detect if this is the header row with "Moneda" - remember the column
+			if cellStr == "moneda" {
+				monedaCol = colIdx
+			}
+			
+			// If we previously found the "Moneda" header, check this row for the currency value
+			if monedaCol >= 0 && colIdx == monedaCol && cellStr != "moneda" {
+				// This is the value row for the Moneda column
+				if strings.Contains(cellStr, "dolar") || strings.Contains(cellStr, "dólar") ||
+				   strings.Contains(cellStr, "dollar") || 
+				   strings.Contains(cellRaw, "US$") || strings.Contains(cellStr, "usd") {
 					statement.Currency = "US$"
-				} else if strings.Contains(cellRaw, "$") || strings.Contains(cellStr, "peso") {
+				} else if strings.Contains(cellStr, "peso") || cellRaw == "$" {
 					statement.Currency = "$"
 				}
 			}

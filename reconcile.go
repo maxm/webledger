@@ -352,7 +352,7 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 			
 			// Check if amounts match (allowing for small rounding differences)
 			amountDiff := math.Abs(bankAmount - lt.Amount)
-			if amountDiff < 0.01 {
+			if amountDiff < 0.001 {
 				// Exact match!
 				match := ReconciliationMatch{
 					BankTransaction:   &statement.Transactions[bi],
@@ -389,7 +389,7 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 			
 			// Check if amounts match (allowing for small rounding differences)
 			amountDiff := math.Abs(bankAmount - lt.Amount)
-			if amountDiff < 0.01 {
+			if amountDiff < 0.001 {
 				// Fuzzy match (date within 2 days)
 				match := ReconciliationMatch{
 					BankTransaction:   &statement.Transactions[bi],

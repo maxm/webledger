@@ -57,7 +57,7 @@ The reconciliation engine uses a two-pass matching algorithm:
 
 ### Pass 1: Exact Matches
 - Date within 3 days
-- Amount matches within $0.01
+- Amount matches within $0.001
 - High confidence matches
 
 ### Pass 2: Fuzzy Matches
