@@ -1,4 +1,4 @@
-GOOS=linux GOARCH=386 CGO_ENABLED=0 go build -o build/main.linux main.go tokens.go ledger.go gzip.go templates.go
+GOOS=linux GOARCH=386 CGO_ENABLED=0 go build -o build/main.linux
 ssh server <<'ENDSSH'
   mkdir -p /var/www/webledger/
 ENDSSH
