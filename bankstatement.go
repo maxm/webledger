@@ -114,7 +114,10 @@ func parseBrouSheet(sheet *xls.WorkSheet) (*BankStatement, error) {
 			// Detect currency from "Moneda" field or currency indicators
 			cellLower := strings.ToLower(cellStr)
 			if strings.Contains(cellLower, "moneda") {
-				if strings.Contains(cellStr, "US$") || strings.Contains(cellLower, "dolar") || strings.Contains(cellLower, "usd") {
+				// BROU uses "U$S" for dollars, also check for "US$" and "dolar"
+				if strings.Contains(cellStr, "U$S") || strings.Contains(cellStr, "US$") || 
+				   strings.Contains(cellLower, "dolar") || strings.Contains(cellLower, "dólar") ||
+				   strings.Contains(cellLower, "usd") {
 					statement.Currency = "US$"
 				} else if strings.Contains(cellStr, "$") || strings.Contains(cellLower, "peso") {
 					statement.Currency = "$"

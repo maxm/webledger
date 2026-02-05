@@ -41,7 +41,7 @@
       </thead>
       <tbody>
         {{ range .result.AllBankTransactions }}
-        <tr class="{{if not .Matched}}warning{{else if eq .MatchType "fuzzy"}}info{{end}}" style="{{if not .Matched}}background-color: #fcf8e3;{{end}}">
+        <tr class="{{if not .Matched}}warning{{end}}" style="{{if not .Matched}}background-color: #fcf8e3;{{end}}">
           <td>{{.Transaction.Date.Format "2006-01-02"}}</td>
           <td>
             {{.Transaction.Description}}
@@ -56,7 +56,7 @@
             {{ else if eq .MatchType "exact" }}
               <span class="label label-success">Matched</span>
             {{ else }}
-              <span class="label label-info">Fuzzy ({{printf "%.0f" (mul .MatchScore 100)}}%)</span>
+              <span class="label label-success">Fuzzy ({{printf "%.0f" (mul .MatchScore 100)}}%)</span>
             {{ end }}
           </td>
         </tr>
