@@ -15,6 +15,7 @@
             {{ end }}
             <option value="Assets:Bank:BROU">BROU (Assets:Bank:BROU) - create new</option>
             <option value="Assets:Bank:Itau">Itau (Assets:Bank:Itau) - create new</option>
+            <option value="Assets:VisaItau">Visa Itau (Assets:VisaItau) - create new</option>
           </select>
           <span class="help-block">Select an existing bank account or use a new one</span>
         </div>
@@ -23,8 +24,8 @@
       <div class="control-group">
         <label class="control-label" for="statement">Bank Statement File</label>
         <div class="controls">
-          <input type="file" name="statement" id="statement" accept=".xls,.xlsx,.csv" required>
-          <span class="help-block">Upload .xls or .csv file from your bank</span>
+          <input type="file" name="statement" id="statement" accept=".xls,.xlsx,.csv,.pdf" required>
+          <span class="help-block">Upload .xls, .csv, or .pdf file from your bank</span>
         </div>
       </div>
       
@@ -42,6 +43,7 @@
       <ul>
         <li><strong>BROU:</strong> "Detalle_Movimiento_Cuenta" .xls files</li>
         <li><strong>Itau:</strong> "Estado_De_Cuenta" .xls files</li>
+        <li><strong>Visa Itau:</strong> Credit card statement .pdf files</li>
         <li><strong>CSV:</strong> Generic CSV format with Date, Description, Debit, Credit columns</li>
       </ul>
     </div>

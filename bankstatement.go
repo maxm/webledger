@@ -780,8 +780,9 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 			// Remove the date portion first
 			lineAfterDate := datePattern.ReplaceAllString(lineStr, "")
 
-			// Find all amounts in the line
+			// Find all amounts in the line and their positions
 			amounts := amountPattern.FindAllString(lineAfterDate, -1)
+			amountPositions := amountPattern.FindAllStringIndex(lineAfterDate, -1)
 
 			// Extract description - everything before the first amount
 			description := lineAfterDate
@@ -802,14 +803,78 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 				}
 			}
 
-			// The PDF has multiple amount columns:
-			// 1. Origin amount (original currency) - we want to IGNORE this
-			// 2. Statement amount in pesos or dollars - this is the LAST amount in the line
-			// 
-			// We take the LAST amount found in the line as that's the statement amount
+			// Determine currency based on line length:
+			// - len >= 115: Dollar transactions (has both origin and dollar amount columns)
+			// - len < 115: Peso transactions (shorter lines, peso-only column)
+			lineLen := len(lineStr)
+			isDollarLine := lineLen >= 115
+
+			// Special case: PAGOS line has BOTH peso and dollar payments
+			// The peso amount is in the peso column (~char 70-85) and dollar amount is last
+			isPagosLine := strings.Contains(strings.ToUpper(description), "PAGOS")
+
+			if isPagosLine && len(amounts) >= 2 && len(amountPositions) >= 2 {
+				// For PAGOS: check if there's an amount in the peso column position
+				// The peso column ends around char 85-90 in the lineAfterDate
+				// If the second-to-last amount ends before char 95, it's likely a peso amount
+				secondLastPos := amountPositions[len(amountPositions)-2]
+				if secondLastPos[1] < 95 {
+					// We have both peso and dollar payments
+					pesoAmount := parseVisaAmount(amounts[len(amounts)-2])
+					dollarAmount := parseVisaAmount(amounts[len(amounts)-1])
+
+					// Create peso transaction
+					if pesoAmount != 0 {
+						pesoTx := BankTransaction{
+							Date:        date,
+							Description: description,
+							Account:     "Assets:VisaItau",
+							Currency:    "$",
+						}
+						if pesoAmount < 0 {
+							pesoTx.Credit = -pesoAmount
+						} else {
+							pesoTx.Debit = pesoAmount
+						}
+						pesoStatement.Transactions = append(pesoStatement.Transactions, pesoTx)
+					}
+
+					// Create dollar transaction
+					if dollarAmount != 0 {
+						dollarTx := BankTransaction{
+							Date:        date,
+							Description: description,
+							Account:     "Assets:VisaItau",
+							Currency:    "US$",
+						}
+						if dollarAmount < 0 {
+							dollarTx.Credit = -dollarAmount
+						} else {
+							dollarTx.Debit = dollarAmount
+						}
+						dollarStatement.Transactions = append(dollarStatement.Transactions, dollarTx)
+					}
+
+					// Update date ranges for both
+					if pesoStatement.StartDate.IsZero() || date.Before(pesoStatement.StartDate) {
+						pesoStatement.StartDate = date
+					}
+					if pesoStatement.EndDate.IsZero() || date.After(pesoStatement.EndDate) {
+						pesoStatement.EndDate = date
+					}
+					if dollarStatement.StartDate.IsZero() || date.Before(dollarStatement.StartDate) {
+						dollarStatement.StartDate = date
+					}
+					if dollarStatement.EndDate.IsZero() || date.After(dollarStatement.EndDate) {
+						dollarStatement.EndDate = date
+					}
+					continue // Skip the normal processing
+				}
+			}
+
+			// Normal case: take the last amount as the statement amount
 			var statementAmount float64
 			if len(amounts) > 0 {
-				// Use the last amount in the line (statement amount)
 				statementAmount = parseVisaAmount(amounts[len(amounts)-1])
 			}
 
@@ -818,12 +883,6 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 				continue
 			}
 
-			// Determine currency based on line length:
-			// - len >= 115: Dollar transactions (has both origin and dollar amount columns)
-			// - len < 115: Peso transactions (shorter lines, peso-only column)
-			lineLen := len(lineStr)
-			isDollar := lineLen >= 115
-
 			// Create transaction
 			tx := BankTransaction{
 				Date:        date,
@@ -831,7 +890,7 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 				Account:     "Assets:VisaItau",
 			}
 
-			if isDollar {
+			if isDollarLine {
 				tx.Currency = "US$"
 			} else {
 				tx.Currency = "$"
@@ -849,7 +908,7 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 
 			// Add to appropriate statement
 			var targetStatement *BankStatement
-			if isDollar {
+			if isDollarLine {
 				targetStatement = dollarStatement
 			} else {
 				targetStatement = pesoStatement
