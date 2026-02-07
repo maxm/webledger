@@ -6,7 +6,33 @@
     <div class="alert alert-info">
       {{ if .result.DateRange }}<p><strong>Period:</strong> {{.result.DateRange}}</p>{{ end }}
       {{ if .result.BankStatement.Currency }}<p><strong>Currency:</strong> {{.result.BankStatement.Currency}}</p>{{ end }}
+      {{ if .result.BankStatement.StartBalances }}
+      <p><strong>Opening Balance:</strong>
+        {{ range $i, $amt := .result.BankStatement.StartBalances }}{{ if $i }} | {{ end }}{{$amt.Currency}}{{printf "%.2f" $amt.Value}}{{ end }}
+      </p>
+      {{ end }}
+      {{ if .result.BankStatement.EndBalances }}
+      <p><strong>Closing Balance:</strong>
+        {{ range $i, $amt := .result.BankStatement.EndBalances }}{{ if $i }} | {{ end }}{{$amt.Currency}}{{printf "%.2f" $amt.Value}}{{ end }}
+      </p>
+      {{ end }}
     </div>
+
+    {{ if or .ledgerStartBalances .ledgerEndBalances }}
+    <div class="alert alert-success">
+      <p><strong>Ledger Balance — {{.bankAccount}}</strong></p>
+      {{ if .ledgerStartBalances }}
+      <p><strong>Opening:</strong>
+        {{ range $i, $amt := .ledgerStartBalances }}{{ if $i }} | {{ end }}{{$amt.Currency}}{{printf "%.2f" $amt.Value}}{{ end }}
+      </p>
+      {{ end }}
+      {{ if .ledgerEndBalances }}
+      <p><strong>Closing:</strong>
+        {{ range $i, $amt := .ledgerEndBalances }}{{ if $i }} | {{ end }}{{$amt.Currency}}{{printf "%.2f" $amt.Value}}{{ end }}
+      </p>
+      {{ end }}
+    </div>
+    {{ end }}
     
     <h3>Bank Statement Transactions</h3>
     <p><span class="label label-warning">Highlighted rows</span> are not found in your ledger file.</p>

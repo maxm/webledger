@@ -26,15 +26,21 @@ type BankTransaction struct {
 	Currency    string // "$" for Pesos, "US$" for US Dollars
 }
 
+// Amount represents a monetary amount with its currency
+type Amount struct {
+	Currency string  // "$" for Pesos, "US$" for US Dollars
+	Value    float64
+}
+
 // BankStatement represents a complete bank statement
 type BankStatement struct {
 	Account      string
 	Currency     string // "$" for Pesos, "US$" for US Dollars
 	Transactions []BankTransaction
-	StartBalance float64
-	EndBalance   float64
 	StartDate    time.Time
 	EndDate      time.Time
+	StartBalances []Amount
+	EndBalances   []Amount
 }
 
 // ParseBrouStatement parses a BROU bank statement XLS file
@@ -760,9 +766,33 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 				fullText.WriteString(t.S)
 			}
 			lineStr := fullText.String()
+			lineUpper := strings.ToUpper(strings.TrimSpace(lineStr))
+
+			// Parse SALDO lines for statement balances
+			if strings.Contains(lineUpper, "SALDO DEL ESTADO DE CUENTA ANTERIOR") {
+				amounts := amountPattern.FindAllString(lineStr, -1)
+				if len(amounts) >= 2 {
+					pesoStatement.StartBalances = append(pesoStatement.StartBalances, Amount{Currency: "$", Value: parseVisaAmount(amounts[len(amounts)-2])})
+					dollarStatement.StartBalances = append(dollarStatement.StartBalances, Amount{Currency: "US$", Value: parseVisaAmount(amounts[len(amounts)-1])})
+				} else if len(amounts) == 1 {
+					pesoStatement.StartBalances = append(pesoStatement.StartBalances, Amount{Currency: "$", Value: parseVisaAmount(amounts[0])})
+				}
+				continue
+			}
+
+			if strings.Contains(lineUpper, "SALDO CONTADO") {
+				amounts := amountPattern.FindAllString(lineStr, -1)
+				if len(amounts) >= 2 {
+					pesoStatement.EndBalances = append(pesoStatement.EndBalances, Amount{Currency: "$", Value: parseVisaAmount(amounts[len(amounts)-2])})
+					dollarStatement.EndBalances = append(dollarStatement.EndBalances, Amount{Currency: "US$", Value: parseVisaAmount(amounts[len(amounts)-1])})
+				} else if len(amounts) == 1 {
+					pesoStatement.EndBalances = append(pesoStatement.EndBalances, Amount{Currency: "$", Value: parseVisaAmount(amounts[0])})
+				}
+				continue
+			}
 
 			// Special case: SEGURO DE VIDA SOBRE SALDO line (doesn't start with date)
-			if strings.Contains(strings.ToUpper(strings.TrimSpace(lineStr)), "SEGURO DE VIDA SOBRE SALDO") {
+			if strings.Contains(lineUpper, "SEGURO DE VIDA SOBRE SALDO") {
 				amounts := amountPattern.FindAllString(lineStr, -1)
 
 				if len(amounts) >= 2 {

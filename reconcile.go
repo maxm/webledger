@@ -86,6 +86,35 @@ func GetAccountForDescription(description string, isExpense bool) string {
 	return "Income:Unknown"
 }
 
+// QueryLedgerAccountBalances queries the ledger balance for an account at a specific date.
+// It returns a slice of Amount, one per commodity found.
+// The date is exclusive (balance as of end of previous day).
+func QueryLedgerAccountBalances(ledgerName string, account string, endDate time.Time) []Amount {
+	dateStr := endDate.Format("2006-01-02")
+	query := fmt.Sprintf(`bal '%s' -e '%s' -F '%%T\n'`, account, dateStr)
+	output := strings.TrimSpace(LedgerExec(ledgerName, query))
+	if output == "" {
+		return nil
+	}
+
+	var balances []Amount
+	amountRegex := regexp.MustCompile(`^\s*((?:US)?\$)\s*([\-\d,\.]+)\s*$`)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if m := amountRegex.FindStringSubmatch(line); m != nil {
+			currency := m[1]
+			valStr := strings.ReplaceAll(m[2], ",", "")
+			val := 0.0
+			fmt.Sscanf(valStr, "%f", &val)
+			balances = append(balances, Amount{Currency: currency, Value: val})
+		}
+	}
+	return balances
+}
+
 // QueryLedgerTransactions queries ledger using CLI with optional commodity/currency filter
 // Uses format: reg <account> -l "commodity == '<currency>'" -F "%(format_date(date, \"%Y-%m-%d\")) %t\n"
 func QueryLedgerTransactions(ledgerName string, account string, currency string) ([]LedgerTransaction, error) {
@@ -460,7 +489,6 @@ type groupedTransaction struct {
 	Date           time.Time
 	BankAccount    string
 	CounterAccount string
-	Currency       string
 	Transactions   []BankTransaction
 }
 
@@ -478,11 +506,6 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 		isExpense := amount < 0
 		counterAccount := GetAccountForDescription(tx.Description, isExpense)
 		
-		currency := tx.Currency
-		if currency == "" {
-			currency = "$"
-		}
-		
 		// Only group if it's a known account (not Unknown)
 		if strings.Contains(counterAccount, "Unknown") {
 			ungroupedTransactions = append(ungroupedTransactions, tx)
@@ -497,7 +520,6 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 				Date:           tx.Date,
 				BankAccount:    tx.Account,
 				CounterAccount: counterAccount,
-				Currency:       currency,
 				Transactions:   []BankTransaction{},
 			}
 		}
@@ -556,7 +578,11 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 		// Add each bank transaction line
 		for _, tx := range group.Transactions {
 			amount := tx.Credit - tx.Debit
-			entry.WriteString(fmt.Sprintf("  %s  %s%.2f", group.BankAccount, group.Currency, amount))
+			currency := tx.Currency
+			if currency == "" {
+				currency = "$"
+			}
+			entry.WriteString(fmt.Sprintf("  %s  %s%.2f", group.BankAccount, currency, amount))
 			// Add comment with description if there are multiple transactions
 			if len(group.Transactions) > 1 {
 				shortDesc := strings.TrimSpace(tx.Description)

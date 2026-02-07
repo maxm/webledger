@@ -429,6 +429,12 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 			EndDate:      maxDate,
 		}
 
+		// Aggregate balances from all individual statements
+		for _, stmt := range statements {
+			combinedStatement.StartBalances = append(combinedStatement.StartBalances, stmt.StartBalances...)
+			combinedStatement.EndBalances = append(combinedStatement.EndBalances, stmt.EndBalances...)
+		}
+
 		combinedResult := &ReconciliationResult{
 			AllBankTransactions: allBankTransactions,
 			UnmatchedBank:       allUnmatchedBank,
@@ -440,15 +446,21 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 			TotalBankCredits:    totalBankCredits,
 		}
 
+		// Query ledger balances at start and end of period
+		ledgerStartBalances := QueryLedgerAccountBalances(ledger, bankAccount, minDate)
+		ledgerEndBalances := QueryLedgerAccountBalances(ledger, bankAccount, maxDate.AddDate(0, 0, 1))
+
 		email := GetCookie(r).Email
 		data := map[string]interface{}{
-			"ledger":           ledger,
-			"ledgers":          AuthLedgers(email),
-			"email":            email,
-			"root":             RootPath,
-			"result":           combinedResult,
-			"bankAccount":      bankAccount,
-			"suggestedEntries": GenerateLedgerEntries(allUnmatchedBank),
+			"ledger":              ledger,
+			"ledgers":             AuthLedgers(email),
+			"email":               email,
+			"root":                RootPath,
+			"result":              combinedResult,
+			"bankAccount":         bankAccount,
+			"suggestedEntries":    GenerateLedgerEntries(allUnmatchedBank),
+			"ledgerStartBalances": ledgerStartBalances,
+			"ledgerEndBalances":   ledgerEndBalances,
 		}
 
 		RenderTemplate(w, "reconcile_result", data)
@@ -465,16 +477,22 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 	// Perform reconciliation
 	result := ReconcileBankStatement(statement, ledgerTransactions)
 	
+	// Query ledger balances at start and end of period
+	ledgerStartBalances := QueryLedgerAccountBalances(ledger, bankAccount, statement.StartDate)
+	ledgerEndBalances := QueryLedgerAccountBalances(ledger, bankAccount, statement.EndDate.AddDate(0, 0, 1))
+
 	// Prepare data for template
 	email := GetCookie(r).Email
 	data := map[string]interface{}{
-		"ledger":          ledger,
-		"ledgers":         AuthLedgers(email),
-		"email":           email,
-		"root":            RootPath,
-		"result":          result,
-		"bankAccount":     bankAccount,
-		"suggestedEntries": GenerateLedgerEntries(result.UnmatchedBank),
+		"ledger":              ledger,
+		"ledgers":             AuthLedgers(email),
+		"email":               email,
+		"root":                RootPath,
+		"result":              result,
+		"bankAccount":         bankAccount,
+		"suggestedEntries":    GenerateLedgerEntries(result.UnmatchedBank),
+		"ledgerStartBalances": ledgerStartBalances,
+		"ledgerEndBalances":   ledgerEndBalances,
 	}
 	
 	RenderTemplate(w, "reconcile_result", data)
