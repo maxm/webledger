@@ -1,3 +1,19 @@
 {{ define "content" }}
-Logged in as {{ .email }}
+<div class="row">
+  <div class="span12">
+    <h2>Welcome</h2>
+    <p>Logged in as <strong>{{ .email }}</strong></p>
+    
+    <h3>Available Ledgers</h3>
+    {{ if .ledgers }}
+    <ul class="nav nav-list">
+      {{ range .ledgers }}
+      <li><a href="{{ $.root }}/{{ . }}"><i class="icon-book"></i> {{ . }}</a></li>
+      {{ end }}
+    </ul>
+    {{ else }}
+    <p class="muted">No ledgers available for your account.</p>
+    {{ end }}
+  </div>
+</div>
 {{ end }}
