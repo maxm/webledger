@@ -460,7 +460,6 @@ type groupedTransaction struct {
 	Date           time.Time
 	BankAccount    string
 	CounterAccount string
-	Currency       string
 	Transactions   []BankTransaction
 }
 
@@ -478,11 +477,6 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 		isExpense := amount < 0
 		counterAccount := GetAccountForDescription(tx.Description, isExpense)
 		
-		currency := tx.Currency
-		if currency == "" {
-			currency = "$"
-		}
-		
 		// Only group if it's a known account (not Unknown)
 		if strings.Contains(counterAccount, "Unknown") {
 			ungroupedTransactions = append(ungroupedTransactions, tx)
@@ -497,7 +491,6 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 				Date:           tx.Date,
 				BankAccount:    tx.Account,
 				CounterAccount: counterAccount,
-				Currency:       currency,
 				Transactions:   []BankTransaction{},
 			}
 		}
@@ -556,7 +549,11 @@ func GenerateLedgerEntries(unmatchedTransactions []BankTransaction) []string {
 		// Add each bank transaction line
 		for _, tx := range group.Transactions {
 			amount := tx.Credit - tx.Debit
-			entry.WriteString(fmt.Sprintf("  %s  %s%.2f", group.BankAccount, group.Currency, amount))
+			currency := tx.Currency
+			if currency == "" {
+				currency = "$"
+			}
+			entry.WriteString(fmt.Sprintf("  %s  %s%.2f", group.BankAccount, currency, amount))
 			// Add comment with description if there are multiple transactions
 			if len(group.Transactions) > 1 {
 				shortDesc := strings.TrimSpace(tx.Description)
