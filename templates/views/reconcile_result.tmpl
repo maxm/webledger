@@ -4,25 +4,8 @@
     <h2>Reconciliation Results - {{.bankAccount}}</h2>
     
     <div class="alert alert-info">
-      <h4>Summary</h4>
-      <div class="row">
-        <div class="span6">
-          <p><strong>Period:</strong> {{.result.DateRange}}</p>
-          <p><strong>Currency:</strong> {{.result.BankStatement.Currency}}</p>
-          <p><strong>Bank Transactions:</strong> {{len .result.BankStatement.Transactions}}</p>
-          {{ if gt (len .result.BankStatement.Transactions) 0 }}
-          <p><strong>Matched:</strong> {{len .result.Matches}} ({{printf "%.0f" (div (mul (len .result.Matches | float64) 100.0) (len .result.BankStatement.Transactions | float64))}}%)</p>
-          {{ else }}
-          <p><strong>Matched:</strong> {{len .result.Matches}} (0%)</p>
-          {{ end }}
-          <p><strong>Unmatched:</strong> <span class="label label-warning">{{len .result.UnmatchedBank}}</span></p>
-        </div>
-        <div class="span6">
-          <p><strong>Bank Debits:</strong> {{.result.BankStatement.Currency}}{{printf "%.2f" .result.TotalBankDebits}}</p>
-          <p><strong>Bank Credits:</strong> {{.result.BankStatement.Currency}}{{printf "%.2f" .result.TotalBankCredits}}</p>
-          <p><strong>Net Change:</strong> {{.result.BankStatement.Currency}}{{printf "%.2f" (sub .result.TotalBankCredits .result.TotalBankDebits)}}</p>
-        </div>
-      </div>
+      {{ if .result.DateRange }}<p><strong>Period:</strong> {{.result.DateRange}}</p>{{ end }}
+      {{ if .result.BankStatement.Currency }}<p><strong>Currency:</strong> {{.result.BankStatement.Currency}}</p>{{ end }}
     </div>
     
     <h3>Bank Statement Transactions</h3>

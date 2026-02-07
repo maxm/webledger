@@ -703,6 +703,8 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 	// Amount pattern: numbers with comma as decimal separator, optional negative
 	amountPattern := regexp.MustCompile(`-?\d+(?:\.\d{3})*,\d{2}`)
 
+	var firstTransactionDate time.Time
+
 	for pageNum := 1; pageNum <= pdfReader.NumPage(); pageNum++ {
 		page := pdfReader.Page(pageNum)
 		if page.V.IsNull() {
@@ -759,6 +761,63 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 			}
 			lineStr := fullText.String()
 
+			// Special case: SEGURO DE VIDA SOBRE SALDO line (doesn't start with date)
+			if strings.Contains(strings.ToUpper(strings.TrimSpace(lineStr)), "SEGURO DE VIDA SOBRE SALDO") {
+				amounts := amountPattern.FindAllString(lineStr, -1)
+
+				if len(amounts) >= 2 {
+					pesoAmount := parseVisaAmount(amounts[len(amounts)-2])
+					dollarAmount := parseVisaAmount(amounts[len(amounts)-1])
+
+						// Use the first transaction date (start of period)
+						seguroDate := firstTransactionDate
+						if seguroDate.IsZero() {
+							seguroDate = time.Now() // Fallback if no previous transactions
+						}
+
+						// Create peso transaction
+						if pesoAmount != 0 {
+							pesoTx := BankTransaction{
+								Date:        seguroDate,
+								Description: "SEGURO DE VIDA SOBRE SALDO",
+								Account:     "Assets:VisaItau",
+								Currency:    "$",
+							}
+							if pesoAmount < 0 {
+								pesoTx.Credit = -pesoAmount
+							} else {
+								pesoTx.Debit = pesoAmount
+							}
+							pesoStatement.Transactions = append(pesoStatement.Transactions, pesoTx)
+						}
+
+						// Create dollar transaction
+						if dollarAmount != 0 {
+							dollarTx := BankTransaction{
+								Date:        seguroDate,
+								Description: "SEGURO DE VIDA SOBRE SALDO",
+								Account:     "Assets:VisaItau",
+								Currency:    "US$",
+							}
+							if dollarAmount < 0 {
+								dollarTx.Credit = -dollarAmount
+							} else {
+								dollarTx.Debit = dollarAmount
+							}
+							dollarStatement.Transactions = append(dollarStatement.Transactions, dollarTx)
+						}
+
+						// Update date ranges
+						if pesoStatement.StartDate.IsZero() || seguroDate.Before(pesoStatement.StartDate) {
+							pesoStatement.StartDate = seguroDate
+						}
+						if dollarStatement.StartDate.IsZero() || seguroDate.Before(dollarStatement.StartDate) {
+							dollarStatement.StartDate = seguroDate
+						}
+				}
+				continue
+			}
+
 			// Check if this is a transaction line (starts with date)
 			if !datePattern.MatchString(lineStr) {
 				continue
@@ -775,6 +834,11 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 			year += 2000 // Convert YY to YYYY
 
 			date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+			
+			// Track the first date we've seen
+			if firstTransactionDate.IsZero() {
+				firstTransactionDate = date
+			}
 
 			// Extract description - text after date and before amounts
 			// Remove the date portion first
@@ -924,6 +988,49 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 			}
 		}
 	}
+
+	// Post-processing: merge "REDUC. IVA LEY 17934" entries into matching transactions
+	// The IVA reduction credit should be ~7.3% or ~6.7% (±0.2%) of the debit of a same-date transaction
+	mergeIVAReductions := func(stmt *BankStatement) {
+		var merged []BankTransaction
+		ivaEntries := []BankTransaction{}
+
+		// Separate IVA reductions from normal transactions
+		for _, tx := range stmt.Transactions {
+			if strings.HasPrefix(tx.Description, "REDUC. IVA LEY 17934") {
+				ivaEntries = append(ivaEntries, tx)
+			} else {
+				merged = append(merged, tx)
+			}
+		}
+
+		// For each IVA reduction, find a matching transaction
+		for _, iva := range ivaEntries {
+			ivaAmount := iva.Credit
+			matchFound := false
+			for i := range merged {
+				if !merged[i].Date.Equal(iva.Date) || merged[i].Debit == 0 {
+					continue
+				}
+				ratio := ivaAmount / merged[i].Debit
+				if ratio >= 0.066 && ratio <= 0.074 {
+					// Merge: subtract IVA credit from debit
+					merged[i].Debit -= ivaAmount
+					matchFound = true
+					break
+				}
+			}
+			if !matchFound {
+				// Keep unmatched IVA entries as separate transactions
+				merged = append(merged, iva)
+			}
+		}
+
+		stmt.Transactions = merged
+	}
+
+	mergeIVAReductions(pesoStatement)
+	mergeIVAReductions(dollarStatement)
 
 	var result []*BankStatement
 	if len(pesoStatement.Transactions) > 0 {

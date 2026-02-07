@@ -3,6 +3,50 @@
     {
       "patterns": ["DEBITO PAQUETE", "IVA AL 22% IVA PAQUETE", "REDIVA 19210IVA PAQUETE", "IVA PAQUETE"],
       "account": "Expenses:Banco:Itau:Comision Mantenimiento"
+    },
+    {
+      "patterns": ["UTE DEBITO AUTOMATIC"],
+      "account": "Expenses:Cuentas:UTE"
+    },
+    {
+      "patterns": ["LA DIARIA"],
+      "account": "Expenses:Cuentas:Periodismo:La Diaria"
+    },
+    {
+      "patterns": ["C.J.P.P.U. APORTES"],
+      "account": "Expenses:Cuentas:Caja de Profesionales"
+    },
+    {
+      "patterns": ["MEDICINA PERSONALIZA"],
+      "account": "Expenses:Cuentas:Salud:MP"
+    },
+    {
+      "patterns": ["ANTEL FIJO DEB.AUT."],
+      "account": "Expenses:Cuentas:Antel"
+    },
+    {
+      "patterns": ["FP SCOPICE SEGURIDAD"],
+      "account": "Expenses:Cuentas:Solis:Alarma:Scopice"
+    },
+    {
+      "patterns": ["ANTEL MOVIL DEB.AUT."],
+      "account": "Expenses:Cuentas:Celular"
+    },
+    {
+      "patterns": ["APPLE.COM/BILL"],
+      "account": "Expenses:Cuentas:Servidor:iCloud"
+    },
+    {
+      "patterns": ["GOOGLE *YOUTUBEPREMI"],
+      "account": "Expenses:Cuentas:Youtube"
+    },
+    {
+      "patterns": ["SPOTIFY"],
+      "account": "Expenses:Cuentas:Spotify"
+    },
+    {
+      "patterns": ["SEGURO DE VIDA SOBRE SALDO"],
+      "account": "Expenses:Visa:Seguro de Vida"
     }
   ]
 }
