@@ -24,8 +24,16 @@
       <div class="control-group">
         <label class="control-label" for="statement">Bank Statement File</label>
         <div class="controls">
-          <input type="file" name="statement" id="statement" accept=".xls,.xlsx,.csv,.pdf" required>
+          <input type="file" name="statement" id="statement" accept=".xls,.xlsx,.csv,.pdf">
           <span class="help-block">Upload .xls, .csv, or .pdf file from your bank</span>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="control-label" for="paste">Or Paste Statement HTML</label>
+        <div class="controls">
+          <textarea name="paste" id="paste" class="input-xxlarge" rows="6" placeholder="Paste Visa Itau Movimientos Actuales HTML here..."></textarea>
+          <span class="help-block">Paste the HTML source from Itau's Movimientos Actuales page</span>
         </div>
       </div>
       
@@ -44,6 +52,7 @@
         <li><strong>BROU:</strong> "Detalle_Movimiento_Cuenta" .xls files</li>
         <li><strong>Itau:</strong> "Estado_De_Cuenta" .xls files</li>
         <li><strong>Visa Itau:</strong> Credit card statement .pdf files</li>
+        <li><strong>Visa Itau Movimientos:</strong> Paste HTML from Itau's Movimientos Actuales page</li>
         <li><strong>CSV:</strong> Generic CSV format with Date, Description, Debit, Credit columns</li>
       </ul>
     </div>

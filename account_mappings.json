@@ -47,6 +47,14 @@
     {
       "patterns": ["SEGURO DE VIDA SOBRE SALDO"],
       "account": "Expenses:Visa:Seguro de Vida"
+    },
+    {
+      "patterns": ["CULTOCAFE"],
+      "account": "Expenses:Comida:Cafe"
+    },
+    {
+      "patterns": ["ANIMALES SIN HOGAR"],
+      "account": "Expenses:Donacion:Animales Sin Hogar"
     }
   ]
 }

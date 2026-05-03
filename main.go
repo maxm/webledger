@@ -316,7 +316,29 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error parsing form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	
+
+	bankAccount := r.FormValue("account")
+
+	// Check if user pasted HTML text
+	pasteText := r.FormValue("paste")
+	var statement *BankStatement
+	var statements []*BankStatement
+
+	if strings.TrimSpace(pasteText) != "" {
+		// Parse pasted Visa Itau Movimientos HTML
+		if bankAccount == "" {
+			bankAccount = "Assets:VisaItau"
+		}
+		statements, err = ParseVisaItauMovimientos(pasteText)
+		if err != nil {
+			http.Error(w, "Error parsing pasted text: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(statements) > 0 {
+			statement = statements[0]
+		}
+	} else {
+	// File upload path
 	file, header, err := r.FormFile("statement")
 	if err != nil {
 		http.Error(w, "Error retrieving file: "+err.Error(), http.StatusBadRequest)
@@ -332,7 +354,6 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Detect bank from filename or form parameter
-	bankAccount := r.FormValue("account")
 	if bankAccount == "" {
 		bankAccount = DetectBankFromFilename(header.Filename)
 	}
@@ -342,8 +363,6 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Parse bank statement
-	var statement *BankStatement
-	var statements []*BankStatement // For PDF files that may return multiple statements
 	fileExtension := strings.ToLower(header.Filename[strings.LastIndex(header.Filename, ".")+1:])
 	
 	if fileExtension == "xls" || fileExtension == "xlsx" {
@@ -386,6 +405,7 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unsupported file format. Please upload .xls, .csv, or .pdf", http.StatusBadRequest)
 		return
 	}
+	} // end file upload else block
 	
 	// If we have multiple statements (e.g., Pesos and Dollars from Visa), render a combined result
 	if len(statements) > 1 {

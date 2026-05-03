@@ -1021,46 +1021,8 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 
 	// Post-processing: merge "REDUC. IVA LEY 17934" entries into matching transactions
 	// The IVA reduction credit should be ~7.3% or ~6.7% (±0.2%) of the debit of a same-date transaction
-	mergeIVAReductions := func(stmt *BankStatement) {
-		var merged []BankTransaction
-		ivaEntries := []BankTransaction{}
-
-		// Separate IVA reductions from normal transactions
-		for _, tx := range stmt.Transactions {
-			if strings.HasPrefix(tx.Description, "REDUC. IVA LEY 17934") {
-				ivaEntries = append(ivaEntries, tx)
-			} else {
-				merged = append(merged, tx)
-			}
-		}
-
-		// For each IVA reduction, find a matching transaction
-		for _, iva := range ivaEntries {
-			ivaAmount := iva.Credit
-			matchFound := false
-			for i := range merged {
-				if !merged[i].Date.Equal(iva.Date) || merged[i].Debit == 0 {
-					continue
-				}
-				ratio := ivaAmount / merged[i].Debit
-				if ratio >= 0.066 && ratio <= 0.074 {
-					// Merge: subtract IVA credit from debit
-					merged[i].Debit -= ivaAmount
-					matchFound = true
-					break
-				}
-			}
-			if !matchFound {
-				// Keep unmatched IVA entries as separate transactions
-				merged = append(merged, iva)
-			}
-		}
-
-		stmt.Transactions = merged
-	}
-
-	mergeIVAReductions(pesoStatement)
-	mergeIVAReductions(dollarStatement)
+	pesoStatement.Transactions = mergeIVAReductions(pesoStatement.Transactions)
+	dollarStatement.Transactions = mergeIVAReductions(dollarStatement.Transactions)
 
 	var result []*BankStatement
 	if len(pesoStatement.Transactions) > 0 {
@@ -1075,6 +1037,42 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 	}
 
 	return result, nil
+}
+
+// mergeIVAReductions merges "REDUC. IVA LEY 17934" entries into same-date transactions
+// where the credit is ~7.3% (±0.7%) of the debit.
+func mergeIVAReductions(transactions []BankTransaction) []BankTransaction {
+	var merged []BankTransaction
+	var ivaEntries []BankTransaction
+
+	for _, tx := range transactions {
+		if strings.HasPrefix(tx.Description, "REDUC. IVA LEY 17934") {
+			ivaEntries = append(ivaEntries, tx)
+		} else {
+			merged = append(merged, tx)
+		}
+	}
+
+	for _, iva := range ivaEntries {
+		ivaAmount := iva.Credit
+		matchFound := false
+		for i := range merged {
+			if !merged[i].Date.Equal(iva.Date) || merged[i].Debit == 0 {
+				continue
+			}
+			ratio := ivaAmount / merged[i].Debit
+			if ratio >= 0.066 && ratio <= 0.074 {
+				merged[i].Debit -= ivaAmount
+				matchFound = true
+				break
+			}
+		}
+		if !matchFound {
+			merged = append(merged, iva)
+		}
+	}
+
+	return merged
 }
 
 // parseVisaAmount parses an amount string from a Visa statement (European format: 1.234,56)
@@ -1100,4 +1098,109 @@ func parseVisaAmount(s string) float64 {
 		return -val
 	}
 	return val
+}
+
+// setPeriodFromTransactions sets StartDate/EndDate to the month boundaries
+// enclosing the earliest and latest transaction dates.
+func setPeriodFromTransactions(s *BankStatement) {
+	if len(s.Transactions) == 0 {
+		return
+	}
+	min, max := s.Transactions[0].Date, s.Transactions[0].Date
+	for _, tx := range s.Transactions[1:] {
+		if tx.Date.Before(min) {
+			min = tx.Date
+		}
+		if tx.Date.After(max) {
+			max = tx.Date
+		}
+	}
+	s.StartDate = time.Date(min.Year(), min.Month(), 1, 0, 0, 0, 0, min.Location())
+	s.EndDate = time.Date(max.Year(), max.Month()+1, 0, 0, 0, 0, 0, max.Location())
+}
+
+// ParseVisaItauMovimientos parses the HTML table from Itau's "Movimientos Actuales" page.
+// It returns two statements (pesos and dollars), similar to ParseVisaItauStatement.
+func ParseVisaItauMovimientos(html string) ([]*BankStatement, error) {
+	pesoStatement := &BankStatement{
+		Account:  "Assets:VisaItau",
+		Currency: "$",
+	}
+	dollarStatement := &BankStatement{
+		Account:  "Assets:VisaItau",
+		Currency: "US$",
+	}
+
+	// Parse table rows: each <tr> has <td> cells
+	rowRegex := regexp.MustCompile(`<tr><td>.*?</td></tr>`)
+	tdRegex := regexp.MustCompile(`<td[^>]*>(.*?)</td>`)
+
+	rows := rowRegex.FindAllString(html, -1)
+	for _, row := range rows {
+		cells := tdRegex.FindAllStringSubmatch(row, -1)
+		if len(cells) < 6 {
+			continue
+		}
+
+		// Cells: 0=Card, 1=Name, 2=Type, 3=Date, 4=Currency, 5=Amount, 6=Cuota
+		description := strings.TrimSpace(cells[1][1])
+		// Decode HTML entities
+		description = strings.ReplaceAll(description, "&amp;", "&")
+		description = strings.ReplaceAll(description, "&lt;", "<")
+		description = strings.ReplaceAll(description, "&gt;", ">")
+
+		dateStr := strings.TrimSpace(cells[3][1])
+		currencyStr := strings.TrimSpace(cells[4][1])
+		amountStr := strings.TrimSpace(cells[5][1])
+
+		// Parse date DD/MM/YY
+		date, err := time.Parse("02/01/06", dateStr)
+		if err != nil {
+			continue
+		}
+
+		amount := parseVisaAmount(amountStr)
+
+		tx := BankTransaction{
+			Date:        date,
+			Description: description,
+			Account:     "Assets:VisaItau",
+		}
+
+		if amount < 0 {
+			tx.Credit = -amount
+		} else {
+			tx.Debit = amount
+		}
+
+		if strings.Contains(currencyStr, "lares") {
+			tx.Currency = "US$"
+			dollarStatement.Transactions = append(dollarStatement.Transactions, tx)
+		} else {
+			tx.Currency = "$"
+			pesoStatement.Transactions = append(pesoStatement.Transactions, tx)
+		}
+	}
+
+	// Merge IVA reductions into parent transactions
+	if len(pesoStatement.Transactions) > 0 {
+		pesoStatement.Transactions = mergeIVAReductions(pesoStatement.Transactions)
+	}
+
+	setPeriodFromTransactions(pesoStatement)
+	setPeriodFromTransactions(dollarStatement)
+
+	var result []*BankStatement
+	if len(pesoStatement.Transactions) > 0 {
+		result = append(result, pesoStatement)
+	}
+	if len(dollarStatement.Transactions) > 0 {
+		result = append(result, dollarStatement)
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no transactions found in pasted text")
+	}
+
+	return result, nil
 }

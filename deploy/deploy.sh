@@ -6,6 +6,7 @@ rsync -avP build/main.linux server:/var/www/webledger/main.linux.next
 rsync -avP -r public server:/var/www/webledger/
 rsync -avP templates server:/var/www/webledger/
 rsync -avP ledgers.json server:/var/www/webledger/
+rsync -avP account_mappings.json server:/var/www/webledger/
 rsync -avP deploy/webledger.service server:/etc/systemd/system/
 ssh server <<'ENDSSH'
   systemctl stop webledger
