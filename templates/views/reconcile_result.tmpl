@@ -100,9 +100,9 @@
     {{ if .suggestedEntries }}
     <div class="well">
       <h4>Suggested Ledger Entries</h4>
-      <p>Copy these entries to add the unmatched bank transactions to your ledger:</p>
-      <pre class="template" style="display: block; max-height: 400px; overflow: auto;">{{ range .suggestedEntries }}{{.}}
-{{ end }}</pre>
+      <p>Edit and copy these entries to add the unmatched bank transactions to your ledger:</p>
+      <textarea class="edit full-file suggested-entries">{{ range .suggestedEntries }}{{.}}
+{{ end }}</textarea>
       <button class="btn btn-small" onclick="copyToClipboard()">Copy to Clipboard</button>
     </div>
     {{ end }}
@@ -115,7 +115,9 @@
 
 <script>
 function copyToClipboard() {
-  var text = document.querySelector('.template').textContent;
+  var ta = document.querySelector('textarea.suggested-entries');
+  var cm = ta && $(ta).data('cm');
+  var text = cm ? cm.getValue() : (ta ? ta.value : '');
   navigator.clipboard.writeText(text).then(function() {
     alert('Copied to clipboard!');
   }, function(err) {

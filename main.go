@@ -474,6 +474,7 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 		data := map[string]interface{}{
 			"ledger":              ledger,
 			"ledgers":             AuthLedgers(email),
+			"accounts":            LedgerAccounts(ledger),
 			"email":               email,
 			"root":                RootPath,
 			"result":              combinedResult,
@@ -506,6 +507,7 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"ledger":              ledger,
 		"ledgers":             AuthLedgers(email),
+		"accounts":            LedgerAccounts(ledger),
 		"email":               email,
 		"root":                RootPath,
 		"result":              result,

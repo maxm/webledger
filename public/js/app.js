@@ -1,20 +1,23 @@
 $(document).ready(function(){
-  var $fullFile = $('.full-file');
-  if($fullFile.length > 0){
-    CodeMirror.commands.autocomplete = function(cm) {
-      CodeMirror.showHint(cm, CodeMirror.ledgerHint, { completeSingle: false });
-    }
-    var codeMirror = CodeMirror.fromTextArea($fullFile[0], {
+  CodeMirror.commands.autocomplete = function(cm) {
+    CodeMirror.showHint(cm, CodeMirror.ledgerHint, { completeSingle: false });
+  }
+  $('.full-file').each(function(){
+    var ta = this;
+    var editor = CodeMirror.fromTextArea(ta, {
       extraKeys: {
         "Ctrl-Space": "autocomplete",
       }
     });
-    codeMirror.on("change", function(cm, change) {
-        CodeMirror.commands.autocomplete(cm);
+    editor.on("change", function(cm, change) {
+      CodeMirror.commands.autocomplete(cm);
     });
-    codeMirror.focus();
-    codeMirror.setCursor({line: codeMirror.lineCount()})
-  }
+    $(ta).data('cm', editor);
+    if($(ta).hasClass('auto-focus')){
+      editor.focus();
+      editor.setCursor({line: editor.lineCount()});
+    }
+  });
 
   var copyTemplate = function(){
     if($('.template').length > 0){
