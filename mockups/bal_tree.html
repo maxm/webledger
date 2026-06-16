@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Webledger — bal tree mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; margin: 0; background: #f5f5f5; color: #333; }
+  .navbar { background: #222; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 16px; }
+  .navbar .brand { font-weight: bold; }
+  .navbar input { padding: 4px 8px; border-radius: 4px; border: 1px solid #444; width: 280px; }
+  .container { max-width: 900px; margin: 20px auto; background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 16px 20px; }
+  .query-line { color: #888; font-family: monospace; font-size: 13px; margin-bottom: 12px; }
+  .toolbar { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; }
+  .toolbar button { font-size: 12px; padding: 3px 10px; border: 1px solid #ccc; background: #fafafa; border-radius: 4px; cursor: pointer; }
+  .toolbar button:hover { background: #eee; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .depth-indicator { font-size: 12px; color: #999; }
+  .toolbar .seg { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
+  .toolbar .seg button { border: none; border-radius: 0; }
+  .toolbar .seg button.active { background: #337ab7; color: #fff; }
+
+  ul.tree { list-style: none; margin: 0; padding: 0; font-family: "SF Mono", Menlo, monospace; font-size: 13px; }
+  ul.tree ul { list-style: none; margin: 0; padding-left: 0; } /* indent handled per-row so amounts stay in a fixed left column */
+
+  .node { display: flex; align-items: center; padding: 3px 6px; border-bottom: 1px solid #f0f0f0; }
+  .node:hover { background: #f0f7ff; }
+
+  /* fixed left column of amounts, right-aligned like the raw ledger output */
+  .node .amounts { flex: none; white-space: nowrap; }
+  .node .amt { display: inline-block; min-width: 105px; text-align: right; }
+  .node .amt.usd { color: #2a7a2a; }
+
+  .node .label { display: flex; align-items: center; padding-left: 18px; } /* gap between amounts and name */
+  .node .twisty { width: 14px; display: inline-block; text-align: center; color: #888; cursor: pointer; user-select: none; flex: none; }
+  .node .twisty.leaf { color: transparent; cursor: default; }
+  .node .name { cursor: pointer; }
+
+  li[data-depth="0"] > .node { font-weight: 600; }
+
+  .collapsed > ul { display: none; }
+
+  .grand-total { border-top: 2px solid #333; margin-top: 8px; padding-top: 6px; font-weight: bold; font-family: "SF Mono", Menlo, monospace; display: flex; }
+  .grand-total .amounts { flex: none; white-space: nowrap; }
+  .grand-total .amt { display: inline-block; min-width: 105px; text-align: right; }
+  .grand-total .amt.usd { color: #2a7a2a; }
+  .grand-total .label { padding-left: 32px; }
+
+  pre.raw { font-family: "SF Mono", Menlo, monospace; font-size: 13px; background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 12px; overflow-x: auto; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="navbar">
+  <span class="brand">max ledger</span>
+  <input type="text" value="bal expenses -p may" readonly>
+  <span style="opacity:.6">Monthly &nbsp; Reconcile</span>
+</div>
+
+<div class="container">
+  <div class="query-line">$ ledger bal expenses -p may</div>
+  <div class="toolbar">
+    <button onclick="setLevel(1)">Top level only</button>
+    <button onclick="changeLevel(-1)">− Less depth</button>
+    <button onclick="changeLevel(1)">+ More depth</button>
+    <button onclick="setLevel(maxDepth + 1)">Expand all</button>
+    <span class="depth-indicator" id="depthIndicator"></span>
+    <span class="spacer"></span>
+    <span class="seg">
+      <button id="btnTree" class="active" onclick="showView('tree')">Tree</button>
+      <button id="btnRaw" onclick="showView('raw')">Raw</button>
+    </span>
+  </div>
+
+  <div id="treeView">
+    <ul class="tree" id="tree"></ul>
+  </div>
+  <pre class="raw hidden" id="rawView"></pre>
+</div>
+
+<script>
+// Raw output captured verbatim from: ledger -f max.ledger bal expenses -p may
+const RAW = String.raw`        $ 176,957.35
+        US$ 2,080.40  Expenses
+            $ 909.21    Banco
+            $ 843.75      Itau:Comision Mantenimiento
+             $ 65.46      Transferencia
+         $ 28,759.32    Comida
+          $ 4,275.83      Almuerzo
+          $ 3,900.00      Cafe
+          $ 1,000.00      Delivery
+          $ 1,000.00        Sushi
+          $ 1,141.00      Feria
+          $ 2,808.51      Salida
+          $ 6,850.47      Supermercado
+          $ 1,500.00      Suplemento Proteina
+         $ 40,682.10
+           US$ 17.77    Cuentas
+          $ 2,573.00      Antel
+          $ 2,000.00      Barometrica
+         $ 14,688.00      Caja de Profesionales
+            $ 910.00      Celular
+            $ 490.00      Periodismo:La Diaria
+         $ 11,199.00      Salud:MP
+            US$ 1.78      Servidor
+            US$ 0.79        Copilot
+            US$ 0.99        iCloud
+          $ 2,558.00      Solis:Alarma:Scopice
+            US$ 6.00      Spotify
+          $ 6,264.10      UTE
+            US$ 9.99      Youtube
+          $ 1,000.00    Donacion:Animales Sin Hogar
+          $ 3,977.29    Ferreteria
+            $ 865.00    Gadgets
+            $ 865.00      Pilas
+          $ 1,000.00    Gimnasio
+          $ 1,000.00      Musculación
+          $ 1,213.47    Herramientas
+          $ 1,213.47      Mecha
+            $ 446.00    Higiene
+            $ 246.00      Jabon
+            $ 200.00      Papel Higienico
+         $ 23,342.00    Inmuebles
+         $ 21,952.00      La Tanga:Compra
+         $ 21,952.00        Escribano
+          $ 1,000.00      Pereira:Cuentas:Gastos Comunes
+            $ 390.00      Roldos y Pons:Gastos Comunes
+          $ 2,722.49    Mascota
+          $ 1,512.00      Alimento de perros
+          $ 1,010.49      Arenita
+            $ 200.00        Desparasitante
+            $ 810.49        Veterinario
+            $ 200.00      Wari:Desparasitante
+            US$ 9.99    Software
+            US$ 9.99      iOS:Sun Tracker
+         $ 23,795.57
+        US$ 1,801.54    Solis
+         $ 22,758.57
+        US$ 1,801.54      Casa
+          $ 3,600.00
+          US$ 876.85        Equipamiento:Aire Acondicionado
+          $ 3,200.00          Instalacion
+          US$ 876.85          James 24000 BTU
+            $ 400.00          Mantenimiento
+         $ 19,158.57
+          US$ 924.69        Sala de Maquinas
+          $ 1,000.00
+          US$ 924.69          Estructura
+          $ 1,000.00            Gas soldador
+          US$ 924.69            Hierro
+          $ 5,065.57          Misc
+         $ 13,093.00          Piso:Estructura
+          $ 1,037.00      Contribucion
+         $ 47,878.89
+          US$ 251.00    Transporte
+         $ 43,283.00
+          US$ 251.00      BYD New E2:Mantenimiento
+          US$ 251.00        Service
+          $ 4,000.00      Peaje
+            $ 595.89      Uber
+            $ 366.01
+            US$ 0.10    Visa
+            $ 366.01
+            US$ 0.10      Seguro de Vida
+--------------------
+        $ 176,957.35
+        US$ 2,080.40`;
+
+// ---- parse the regular `bal` output ----
+// Each row may span several physical lines (one amount per currency); the
+// account name appears on the row's final line. The name's start column
+// encodes depth (ledger indents 2 spaces per level). Each amount is already
+// the rolled-up subtotal for that account, so we don't recompute anything.
+const AMOUNT_ONLY = /^\s*(US\$|\$)\s*(-?[\d,]+\.\d+)\s*$/;
+const AMOUNT_NAME = /^(\s*(?:US\$|\$)\s*-?[\d,]+\.\d+)(\s+)(\S.*?)\s*$/;
+
+function parseAmount(cur, num) {
+  return { cur, val: parseFloat(num.replace(/,/g, "")) };
+}
+
+function parseBal(raw) {
+  const lines = raw.split("\n");
+  const rows = [];          // {nameStart, name, amounts:[]}
+  const totalAmounts = [];  // grand total after the dashed rule
+  let pending = [];
+  let afterRule = false;
+
+  for (const line of lines) {
+    if (/^-{3,}\s*$/.test(line)) { afterRule = true; pending = []; continue; }
+    if (line.trim() === "") continue;
+
+    let m = line.match(AMOUNT_NAME);
+    if (m) {
+      const amounts = [...pending];
+      // amount sits inside group 1 — re-extract it
+      const a = m[1].match(/(US\$|\$)\s*(-?[\d,]+\.\d+)/);
+      amounts.push(parseAmount(a[1], a[2]));
+      pending = [];
+      const nameStart = m[1].length + m[2].length;
+      rows.push({ nameStart, name: m[3], amounts });
+      continue;
+    }
+    m = line.match(AMOUNT_ONLY);
+    if (m) {
+      const amt = parseAmount(m[1], m[2]);
+      if (afterRule) totalAmounts.push(amt);
+      else pending.push(amt);
+    }
+  }
+
+  // depth = (nameStart - minNameStart) / indentUnit
+  const minStart = Math.min(...rows.map(r => r.nameStart));
+  const starts = [...new Set(rows.map(r => r.nameStart))].sort((a, b) => a - b);
+  const unit = starts.length > 1 ? starts[1] - starts[0] : 2;
+  for (const r of rows) r.depth = Math.round((r.nameStart - minStart) / unit);
+
+  // build tree via a depth-indexed stack
+  const roots = [];
+  const stack = [];
+  for (const r of rows) {
+    const node = { name: r.name, amounts: r.amounts, children: [] };
+    if (r.depth === 0) roots.push(node);
+    else if (stack[r.depth - 1]) stack[r.depth - 1].children.push(node);
+    else roots.push(node); // defensive
+    stack[r.depth] = node;
+    stack.length = r.depth + 1;
+  }
+  return { roots, totalAmounts };
+}
+
+// ---- format / render ----
+// fixed currency slots so amounts line up in vertical columns regardless of depth
+const SLOTS = ["$", "US$"];
+function fmtVal(val) {
+  return val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function amountsHtml(amounts) {
+  return SLOTS.map(cur => {
+    const a = amounts.find(x => x.cur === cur);
+    const usd = cur === "US$";
+    return `<span class="amt ${usd ? "usd" : ""}">${a ? cur + " " + fmtVal(a.val) : ""}</span>`;
+  }).join("");
+}
+
+let maxDepth = 0;
+function renderNode(node, depth) {
+  if (depth > maxDepth) maxDepth = depth;
+  const li = document.createElement("li");
+  li.dataset.depth = depth;
+  const hasChildren = node.children.length > 0;
+
+  const div = document.createElement("div");
+  div.className = "node";
+
+  const amounts = document.createElement("span");
+  amounts.className = "amounts";
+  amounts.innerHTML = amountsHtml(node.amounts);
+  div.appendChild(amounts);
+
+  const label = document.createElement("span");
+  label.className = "label";
+  label.style.paddingLeft = (18 + depth * 18) + "px";
+
+  const twisty = document.createElement("span");
+  twisty.className = "twisty" + (hasChildren ? "" : " leaf");
+  twisty.textContent = hasChildren ? "▾" : "•";
+  label.appendChild(twisty);
+
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = node.name;
+  label.appendChild(name);
+
+  div.appendChild(label);
+  li.appendChild(div);
+
+  if (hasChildren) {
+    const ul = document.createElement("ul");
+    for (const c of node.children) ul.appendChild(renderNode(c, depth + 1));
+    li.appendChild(ul);
+    div.style.cursor = "pointer";
+    div.onclick = () => {
+      li.classList.toggle("collapsed");
+      twisty.textContent = li.classList.contains("collapsed") ? "▸" : "▾";
+    };
+  }
+  return li;
+}
+
+const { roots, totalAmounts } = parseBal(RAW);
+const treeEl = document.getElementById("tree");
+for (const r of roots) treeEl.appendChild(renderNode(r, 0));
+
+document.getElementById("rawView").textContent = RAW;
+
+// ---- controls ----
+// `level` = how many levels deep are shown. Nodes at depth >= level are collapsed.
+let level = 1;
+function applyLevel() {
+  document.querySelectorAll("#tree li").forEach(li => {
+    const tw = li.querySelector(":scope > .node .twisty");
+    if (!tw || tw.classList.contains("leaf")) return;
+    const collapsed = (+li.dataset.depth) >= level;
+    li.classList.toggle("collapsed", collapsed);
+    tw.textContent = collapsed ? "▸" : "▾";
+  });
+  document.getElementById("depthIndicator").textContent =
+    `showing ${level} of ${maxDepth + 1} level${maxDepth ? "s" : ""}`;
+}
+function setLevel(n) {
+  level = Math.max(1, Math.min(n, maxDepth + 1));
+  applyLevel();
+}
+function changeLevel(d) { setLevel(level + d); }
+function showView(which) {
+  const tree = which === "tree";
+  document.getElementById("treeView").classList.toggle("hidden", !tree);
+  document.getElementById("rawView").classList.toggle("hidden", tree);
+  document.getElementById("btnTree").classList.toggle("active", tree);
+  document.getElementById("btnRaw").classList.toggle("active", !tree);
+}
+
+setLevel(maxDepth + 1); // start fully expanded
+</script>
+</body>
+</html>

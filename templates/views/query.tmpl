@@ -1,3 +1,23 @@
 {{ define "content" }}
+{{ if .isBal }}
+<div class="bal-tree-wrap">
+  <div class="bal-toolbar">
+    <button type="button" onclick="balTree.topLevel()">Top level only</button>
+    <button type="button" onclick="balTree.changeLevel(-1)">&minus; Less depth</button>
+    <button type="button" onclick="balTree.changeLevel(1)">+ More depth</button>
+    <button type="button" onclick="balTree.expandAll()">Expand all</button>
+    <span class="bal-depth-indicator" id="balDepthIndicator"></span>
+    <span class="bal-spacer"></span>
+    <span class="bal-seg">
+      <button type="button" id="balBtnTree" class="active" onclick="balTree.showView('tree')">Tree</button>
+      <button type="button" id="balBtnRaw" onclick="balTree.showView('raw')">Raw</button>
+    </span>
+  </div>
+  <ul class="bal-tree" id="balTree"></ul>
+  <pre class="bal-raw hidden" id="balTreeRaw">{{.result}}</pre>
+</div>
+<script src="{{.root}}/js/baltree.js"></script>
+{{ else }}
 <pre>{{.result}}</pre>
+{{ end }}
 {{ end }}

@@ -125,7 +125,9 @@ func handleWithTemplateAndData(template string, fillData func(map[string]interfa
 		}
 		fillData(data)
 		if template == "query" {
-			data["result"] = LedgerExec(ledger, r.FormValue("query"))
+			query := r.FormValue("query")
+			data["result"] = LedgerExec(ledger, query)
+			data["isBal"] = isBalQuery(query)
 		}
 		RenderTemplate(w, template, data)
 	}
@@ -133,6 +135,20 @@ func handleWithTemplateAndData(template string, fillData func(map[string]interfa
 
 func handleWithTemplate(template string) func(http.ResponseWriter, *http.Request) {
 	return handleWithTemplateAndData(template, func(map[string]interface{}) { })
+}
+
+// isBalQuery reports whether a ledger query is a balance report, whose
+// indented output we render as a collapsible tree (see public/js/baltree.js).
+func isBalQuery(query string) bool {
+	fields := strings.Fields(query)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "bal", "balance", "b":
+		return true
+	}
+	return false
 }
 
 func monthlyData(data map[string]interface{}) {
