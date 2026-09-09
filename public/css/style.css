@@ -56,8 +56,10 @@ ul.bal-tree ul { list-style: none; margin: 0; padding-left: 0; } /* indent handl
 .bal-node { display: flex; align-items: center; padding: 3px 6px; border-bottom: 1px solid #f0f0f0; }
 .bal-node:hover { background: #f0f7ff; }
 .bal-amounts { flex: none; white-space: nowrap; }
-.bal-amt { display: inline-block; min-width: 105px; text-align: right; }
+.bal-amt { display: inline-block; text-align: right; vertical-align: middle; } /* width set per report in baltree.js */
+.bal-amt + .bal-amt { margin-left: 12px; }
 .bal-amt.usd { color: #2a7a2a; }
+.bal-amt.other { color: #8a6d1f; white-space: pre; } /* one commodity per line */
 .bal-label { display: flex; align-items: center; }
 .bal-twisty { width: 14px; display: inline-block; text-align: center; color: #888; user-select: none; flex: none; }
 .bal-twisty.leaf { color: transparent; }
