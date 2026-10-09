@@ -20,6 +20,7 @@ var templateFuncs = template.FuncMap{
     return a / b
   },
   "float64": func(i int) float64 { return float64(i) },
+  "money": FormatMoney,
 }
 
 func InitTemplates() {

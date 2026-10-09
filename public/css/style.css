@@ -68,3 +68,17 @@ ul.bal-tree ul { list-style: none; margin: 0; padding-left: 0; } /* indent handl
 
 .bal-raw { font-family: Monaco, Consolas, monospace; font-size: 13px; }
 .bal-tree-wrap .hidden { display: none; }
+
+/* ---- reconcile results ---- */
+.reconcile-section { margin-bottom: 36px; }
+.reconcile-section h3 .label { vertical-align: middle; font-size: 13px; }
+.reconcile-section td.num { text-align: right; white-space: nowrap; font-family: Monaco, Consolas, monospace; font-size: 13px; width: 1%; }
+.reconcile-section td.date { white-space: nowrap; width: 1%; }
+.table.reconcile-summary { width: auto; min-width: 560px; }
+.reconcile-section .reconcile-summary td.num { padding-left: 32px; width: auto; }
+.reconcile-summary tr.total td { font-weight: bold; border-top: 2px solid #ccc; }
+.reconcile-summary tr.explained td:first-child { padding-left: 24px; color: #555; }
+.reconcile-summary tr.ok td { color: #468847; }
+.reconcile-summary tr.bad td { color: #b94a48; }
+.reconcile-summary tr.total small { font-weight: normal; }
+.reconcile-section details summary { cursor: pointer; margin: 12px 0 6px; }

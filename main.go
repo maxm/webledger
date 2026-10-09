@@ -423,116 +423,45 @@ func handleReconcileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	} // end file upload else block
 	
-	// If we have multiple statements (e.g., Pesos and Dollars from Visa), render a combined result
-	if len(statements) > 1 {
-		// Combine results from all statements
-		var allBankTransactions []BankTransactionWithStatus
-		var allUnmatchedBank []BankTransaction
-		var allUnmatchedLedger []LedgerTransaction
-		var allMatches []ReconciliationMatch
-		var totalBankDebits, totalBankCredits float64
-		var minDate, maxDate time.Time
-
-		for _, stmt := range statements {
-			ledgerTransactions, err := QueryLedgerTransactions(ledger, stmt.Account, stmt.Currency)
-			if err != nil {
-				http.Error(w, "Error querying ledger: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			result := ReconcileBankStatement(stmt, ledgerTransactions)
-			allBankTransactions = append(allBankTransactions, result.AllBankTransactions...)
-			allUnmatchedBank = append(allUnmatchedBank, result.UnmatchedBank...)
-			allUnmatchedLedger = append(allUnmatchedLedger, result.UnmatchedLedger...)
-			allMatches = append(allMatches, result.Matches...)
-			totalBankDebits += result.TotalBankDebits
-			totalBankCredits += result.TotalBankCredits
-
-			if minDate.IsZero() || stmt.StartDate.Before(minDate) {
-				minDate = stmt.StartDate
-			}
-			if maxDate.IsZero() || stmt.EndDate.After(maxDate) {
-				maxDate = stmt.EndDate
-			}
-		}
-
-		// Create a synthetic combined statement for the template
-		combinedStatement := &BankStatement{
-			Account:      bankAccount,
-			Currency:     "", // Mixed currencies
-			Transactions: allUnmatchedBank,
-			StartDate:    minDate,
-			EndDate:      maxDate,
-		}
-
-		// Aggregate balances from all individual statements
-		for _, stmt := range statements {
-			combinedStatement.StartBalances = append(combinedStatement.StartBalances, stmt.StartBalances...)
-			combinedStatement.EndBalances = append(combinedStatement.EndBalances, stmt.EndBalances...)
-		}
-
-		combinedResult := &ReconciliationResult{
-			AllBankTransactions: allBankTransactions,
-			UnmatchedBank:       allUnmatchedBank,
-			UnmatchedLedger:     allUnmatchedLedger,
-			Matches:             allMatches,
-			BankStatement:       combinedStatement,
-			DateRange:           minDate.Format("2006-01-02") + " to " + maxDate.Format("2006-01-02"),
-			TotalBankDebits:     totalBankDebits,
-			TotalBankCredits:    totalBankCredits,
-		}
-
-		// Query ledger balances at start and end of period
-		ledgerStartBalances := QueryLedgerAccountBalances(ledger, bankAccount, minDate)
-		ledgerEndBalances := QueryLedgerAccountBalances(ledger, bankAccount, maxDate.AddDate(0, 0, 1))
-
-		email := GetCookie(r).Email
-		data := map[string]interface{}{
-			"ledger":              ledger,
-			"ledgers":             AuthLedgers(email),
-			"accounts":            LedgerAccounts(ledger),
-			"email":               email,
-			"root":                RootPath,
-			"result":              combinedResult,
-			"bankAccount":         bankAccount,
-			"suggestedEntries":    GenerateLedgerEntries(allUnmatchedBank),
-			"ledgerStartBalances": ledgerStartBalances,
-			"ledgerEndBalances":   ledgerEndBalances,
-		}
-
-		RenderTemplate(w, "reconcile_result", data)
-		return
+	// Reconcile each statement (one per currency) on its own
+	type reconcileSection struct {
+		Statement *BankStatement
+		Result    *ReconciliationResult
+		Summary   ReconciliationSummary
 	}
-	
-	// Query ledger transactions for this account with currency filter
-	ledgerTransactions, err := QueryLedgerTransactions(ledger, bankAccount, statement.Currency)
-	if err != nil {
-		http.Error(w, "Error querying ledger: "+err.Error(), http.StatusInternalServerError)
-		return
+	var sections []reconcileSection
+	var allUnmatchedBank []BankTransaction
+	for _, stmt := range statements {
+		account := stmt.Account
+		if len(statements) == 1 {
+			account = bankAccount
+		}
+		ledgerTransactions, err := QueryLedgerTransactions(ledger, account, stmt.Currency)
+		if err != nil {
+			http.Error(w, "Error querying ledger: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		result := ReconcileBankStatement(stmt, ledgerTransactions)
+		sections = append(sections, reconcileSection{
+			Statement: stmt,
+			Result:    result,
+			Summary:   SummarizeReconciliation(ledger, account, stmt, result),
+		})
+		allUnmatchedBank = append(allUnmatchedBank, result.UnmatchedBank...)
 	}
-	
-	// Perform reconciliation
-	result := ReconcileBankStatement(statement, ledgerTransactions)
-	
-	// Query ledger balances at start and end of period
-	ledgerStartBalances := QueryLedgerAccountBalances(ledger, bankAccount, statement.StartDate)
-	ledgerEndBalances := QueryLedgerAccountBalances(ledger, bankAccount, statement.EndDate.AddDate(0, 0, 1))
 
-	// Prepare data for template
 	email := GetCookie(r).Email
 	data := map[string]interface{}{
-		"ledger":              ledger,
-		"ledgers":             AuthLedgers(email),
-		"accounts":            LedgerAccounts(ledger),
-		"email":               email,
-		"root":                RootPath,
-		"result":              result,
-		"bankAccount":         bankAccount,
-		"suggestedEntries":    GenerateLedgerEntries(result.UnmatchedBank),
-		"ledgerStartBalances": ledgerStartBalances,
-		"ledgerEndBalances":   ledgerEndBalances,
+		"ledger":           ledger,
+		"ledgers":          AuthLedgers(email),
+		"accounts":         LedgerAccounts(ledger),
+		"email":            email,
+		"root":             RootPath,
+		"sections":         sections,
+		"bankAccount":      bankAccount,
+		"suggestedEntries": GenerateLedgerEntries(allUnmatchedBank),
 	}
-	
+
 	RenderTemplate(w, "reconcile_result", data)
 }
 

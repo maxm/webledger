@@ -45,6 +45,8 @@ Everything is `package main` at the repo root. There are no internal packages.
 
 **Reconciliation** (`bankstatement.go` + `reconcile.go`): Parses uploaded bank statements and matches them against `ledger reg` output for the same account/currency. Two-pass matching: exact (same date, amount diff < 0.001), then fuzzy (date within 2 days, same amount). Unmatched bank transactions are turned into suggested ledger entries via `GenerateLedgerEntries`, which uses `account_mappings.json` to guess the counterpart account by description substring (case-insensitive, whitespace-normalized) and groups same-day same-counterpart transactions into one entry. Unknown descriptions get `Expenses:Unknown` / `Income:Unknown`.
 
+Each statement (one per currency) renders as its own section. `SummarizeReconciliation` compares the statement closing balance (sign-flipped when `BankStatement.Liability`, i.e. credit cards) with the ledger balance at the end of that statement's own period, then breaks the difference down by the unmatched items. Whatever is left over is shown as "Unexplained". Unmatched ledger entries within `boundaryDays` of the period edges go to `BoundaryLedger`, since they usually belong to the adjacent statement. Visa installment lines ("3/10") carry the original purchase date and are moved to the installment's month.
+
 Supported parsers (`bankstatement.go`):
 - `ParseBrouStatement` — BROU `.xls`, account `Assets:Bank:BROU`
 - `ParseItauStatement` — Itau `.xls`, account `Assets:Bank:Itau`

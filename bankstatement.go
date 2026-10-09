@@ -41,6 +41,7 @@ type BankStatement struct {
 	EndDate      time.Time
 	StartBalances []Amount
 	EndBalances   []Amount
+	Liability     bool // credit card: statement balances are amounts owed, negative in the ledger
 }
 
 // ParseBrouStatement parses a BROU bank statement XLS file
@@ -696,12 +697,14 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 		Account:      "Assets:VisaItau",
 		Currency:     "$",
 		Transactions: []BankTransaction{},
+		Liability:    true,
 	}
 
 	dollarStatement := &BankStatement{
 		Account:      "Assets:VisaItau",
 		Currency:     "US$",
 		Transactions: []BankTransaction{},
+		Liability:    true,
 	}
 
 	// Date pattern: DD MM YY
@@ -864,11 +867,6 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 			year += 2000 // Convert YY to YYYY
 
 			date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-			
-			// Track the first date we've seen
-			if firstTransactionDate.IsZero() {
-				firstTransactionDate = date
-			}
 
 			// Extract description - text after date and before amounts
 			// Remove the date portion first
@@ -895,6 +893,22 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 				if err == nil {
 					description = strings.TrimSpace(descParts[1])
 				}
+			}
+
+			// Installment lines ("MERPAGO*CULTOCAFE   3/10") carry the original
+			// purchase date; move them to this installment's month so they
+			// don't stretch the statement period back to the purchase.
+			var reference string
+			if m := installmentPattern.FindStringSubmatch(description); m != nil {
+				n, _ := strconv.Atoi(m[1])
+				date = installmentDate(date, n)
+				description = strings.TrimSpace(description[:len(description)-len(m[0])])
+				reference = "cuota " + m[1] + "/" + m[2]
+			}
+
+			// Track the first date we've seen
+			if firstTransactionDate.IsZero() {
+				firstTransactionDate = date
 			}
 
 			// Determine currency based on line length:
@@ -981,6 +995,7 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 			tx := BankTransaction{
 				Date:        date,
 				Description: description,
+				Reference:   reference,
 				Account:     "Assets:VisaItau",
 			}
 
@@ -1037,6 +1052,24 @@ func ParseVisaItauStatement(reader io.ReaderAt, size int64) ([]*BankStatement, e
 	}
 
 	return result, nil
+}
+
+// installmentPattern matches a trailing "N/M" installment marker in a Visa description
+var installmentPattern = regexp.MustCompile(`\s+(\d{1,2})/(\d{1,2})$`)
+
+// installmentDate returns the date installment n of a purchase is billed:
+// the purchase day, n-1 months later (clamped to the end of shorter months).
+func installmentDate(purchase time.Time, n int) time.Time {
+	if n <= 1 {
+		return purchase
+	}
+	firstOfMonth := time.Date(purchase.Year(), purchase.Month()+time.Month(n-1), 1, 0, 0, 0, 0, purchase.Location())
+	lastDay := firstOfMonth.AddDate(0, 1, -1).Day()
+	day := purchase.Day()
+	if day > lastDay {
+		day = lastDay
+	}
+	return firstOfMonth.AddDate(0, 0, day-1)
 }
 
 // mergeIVAReductions merges "REDUC. IVA LEY 17934" entries into same-date transactions
@@ -1125,10 +1158,12 @@ func ParseVisaItauMovimientos(html string) ([]*BankStatement, error) {
 	pesoStatement := &BankStatement{
 		Account:  "Assets:VisaItau",
 		Currency: "$",
+		Liability: true,
 	}
 	dollarStatement := &BankStatement{
 		Account:  "Assets:VisaItau",
 		Currency: "US$",
+		Liability: true,
 	}
 
 	// Parse table rows: each <tr> has <td> cells

@@ -115,6 +115,17 @@ func QueryLedgerAccountBalances(ledgerName string, account string, endDate time.
 	return balances
 }
 
+// ledgerBalance returns the ledger balance of account in the given currency
+// at the start of date (entries dated on date are excluded).
+func ledgerBalance(ledgerName string, account string, date time.Time, currency string) float64 {
+	for _, b := range QueryLedgerAccountBalances(ledgerName, account, date) {
+		if b.Currency == currency {
+			return b.Value
+		}
+	}
+	return 0
+}
+
 // QueryLedgerTransactions queries ledger using CLI with optional commodity/currency filter
 // Uses format: reg <account> -l "commodity == '<currency>'" -F "%(format_date(date, \"%Y-%m-%d\")) %t\n"
 func QueryLedgerTransactions(ledgerName string, account string, currency string) ([]LedgerTransaction, error) {
@@ -126,10 +137,10 @@ func QueryLedgerTransactions(ledgerName string, account string, currency string)
 	var query string
 	if currency != "" {
 		// Inside single quotes, $ doesn't need escaping for shell, but ledger needs \$ for regex
-		query = fmt.Sprintf(`reg %s -l 'commodity == "\%s"' -F '%%(format_date(date, "%%Y-%%m-%%d")) %%t
+		query = fmt.Sprintf(`reg %s -l 'commodity == "\%s"' -F '%%(format_date(date, "%%Y-%%m-%%d")) %%t	%%P
 '`, account, currency)
 	} else {
-		query = fmt.Sprintf(`reg %s -F '%%(format_date(date, "%%Y-%%m-%%d")) %%t
+		query = fmt.Sprintf(`reg %s -F '%%(format_date(date, "%%Y-%%m-%%d")) %%t	%%P
 '`, account)
 	}
 	
@@ -155,7 +166,8 @@ func QueryLedgerTransactions(ledgerName string, account string, currency string)
 		}
 		
 		dateStr := matches[1]
-		amountStr := strings.TrimSpace(matches[2])
+		amountStr, payee, _ := strings.Cut(matches[2], "\t")
+		amountStr = strings.TrimSpace(amountStr)
 		
 		// Parse date
 		var date time.Time
@@ -174,9 +186,11 @@ func QueryLedgerTransactions(ledgerName string, account string, currency string)
 		amount := parseLedgerAmount(amountStr)
 		
 		transaction := LedgerTransaction{
-			Date:    date,
-			Account: account,
-			Amount:  amount,
+			Date:     date,
+			Account:  account,
+			Amount:      amount,
+			Currency:    currency,
+			Description: strings.TrimSpace(payee),
 		}
 		
 		transactions = append(transactions, transaction)
@@ -191,6 +205,7 @@ type LedgerTransaction struct {
 	Description string
 	Account     string
 	Amount      float64
+	Currency    string
 	LineNumber  int
 	RawEntry    string
 }
@@ -212,11 +227,16 @@ type BankTransactionWithStatus struct {
 	LedgerTransaction *LedgerTransaction
 }
 
+// boundaryDays is how close to the statement period edges an unmatched ledger
+// transaction must be to be reported as likely belonging to an adjacent statement
+const boundaryDays = 2
+
 // ReconciliationResult represents the complete reconciliation result
 type ReconciliationResult struct {
 	Matches             []ReconciliationMatch
 	UnmatchedBank       []BankTransaction
 	UnmatchedLedger     []LedgerTransaction
+	BoundaryLedger      []LedgerTransaction // unmatched, but dated within boundaryDays of the period edges
 	AllBankTransactions []BankTransactionWithStatus
 	BankStatement       *BankStatement
 	DateRange           string
@@ -453,6 +473,14 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 		if !statement.EndDate.IsZero() && lt.Date.After(statement.EndDate) {
 			continue
 		}
+		// Statements overlap by a few days at each edge: items dated near the
+		// period boundary often post on the previous or next statement.
+		nearStart := !statement.StartDate.IsZero() && lt.Date.Before(statement.StartDate.AddDate(0, 0, boundaryDays+1))
+		nearEnd := !statement.EndDate.IsZero() && lt.Date.After(statement.EndDate.AddDate(0, 0, -boundaryDays-1))
+		if nearStart || nearEnd {
+			result.BoundaryLedger = append(result.BoundaryLedger, lt)
+			continue
+		}
 		result.UnmatchedLedger = append(result.UnmatchedLedger, lt)
 	}
 	
@@ -643,4 +671,158 @@ func countMatchType(matches []ReconciliationMatch, matchType string) int {
 		}
 	}
 	return count
+}
+
+// SummaryLine is one reason the ledger and the statement differ
+type SummaryLine struct {
+	Label  string
+	Count  int
+	Amount float64
+}
+
+// ReconciliationSummary compares one statement (one currency) against the
+// ledger and breaks the difference down into the listed unmatched items.
+// All amounts use the ledger's sign convention, so a credit card balance owed
+// is negative.
+type ReconciliationSummary struct {
+	Currency        string
+	StartDate       time.Time
+	EndDate         time.Time
+	StatementLabel  string
+	StatementAmount float64
+	StatementNote   string
+	LedgerLabel     string
+	LedgerAmount    float64
+	Difference      float64 // LedgerAmount - StatementAmount
+	Explained       []SummaryLine
+	Unexplained     float64 // Difference not accounted for by Explained
+	Matched         int
+	BankCount       int
+}
+
+func (s ReconciliationSummary) Reconciled() bool  { return math.Abs(s.Difference) < 0.005 }
+func (s ReconciliationSummary) Explainable() bool { return math.Abs(s.Unexplained) < 0.005 }
+
+// SummarizeReconciliation compares the statement's closing balance with the
+// ledger balance at the end of the period. When the statement has no closing
+// balance it compares the net movement within the period instead.
+func SummarizeReconciliation(ledgerName string, account string, stmt *BankStatement, result *ReconciliationResult) ReconciliationSummary {
+	sum := ReconciliationSummary{
+		Currency:  stmt.Currency,
+		StartDate: stmt.StartDate,
+		EndDate:   stmt.EndDate,
+		Matched:   len(result.Matches),
+		BankCount: len(stmt.Transactions),
+	}
+
+	var closing *Amount
+	for i := range stmt.EndBalances {
+		if stmt.EndBalances[i].Currency == stmt.Currency {
+			closing = &stmt.EndBalances[i]
+		}
+	}
+
+	periodEnd := stmt.EndDate.AddDate(0, 0, 1)
+	ledgerEnd := ledgerBalance(ledgerName, account, periodEnd, stmt.Currency)
+	endLabel := "end of " + stmt.EndDate.Format("2006-01-02")
+
+	if closing != nil {
+		sum.StatementLabel = "Statement closing balance"
+		sum.StatementAmount = closing.Value
+		if stmt.Liability {
+			sum.StatementAmount = -closing.Value
+			sum.StatementNote = fmt.Sprintf("shown on the statement as %s owed", FormatMoney(closing.Value, stmt.Currency))
+		}
+		sum.LedgerLabel = "Ledger balance at " + endLabel
+		sum.LedgerAmount = ledgerEnd
+	} else {
+		for _, tx := range stmt.Transactions {
+			sum.StatementAmount += tx.Credit - tx.Debit
+		}
+		sum.StatementLabel = "Statement net movement"
+		sum.StatementNote = "statement has no closing balance; comparing movement within the period"
+		sum.LedgerLabel = "Ledger net movement " + stmt.StartDate.Format("2006-01-02") + " to " + stmt.EndDate.Format("2006-01-02")
+		sum.LedgerAmount = ledgerEnd - ledgerBalance(ledgerName, account, stmt.StartDate, stmt.Currency)
+	}
+	sum.Difference = sum.LedgerAmount - sum.StatementAmount
+
+	add := func(label string, txs []LedgerTransaction, sign float64) {
+		line := SummaryLine{Label: label}
+		for _, lt := range txs {
+			line.Count++
+			line.Amount += sign * lt.Amount
+		}
+		if line.Count > 0 {
+			sum.Explained = append(sum.Explained, line)
+		}
+	}
+
+	add("Ledger entries not on the statement", result.UnmatchedLedger, 1)
+
+	var missing []LedgerTransaction
+	for _, bt := range result.UnmatchedBank {
+		missing = append(missing, LedgerTransaction{Amount: bt.Credit - bt.Debit})
+	}
+	add("Statement items missing from the ledger", missing, -1)
+
+	// Edge entries near the end are inside the ledger cut but not yet billed.
+	// Near the start they were billed on the previous statement, which only
+	// matters when comparing movement.
+	var edgeStart, edgeEnd []LedgerTransaction
+	for _, lt := range result.BoundaryLedger {
+		if lt.Date.After(stmt.EndDate.AddDate(0, 0, -boundaryDays-1)) {
+			edgeEnd = append(edgeEnd, lt)
+		} else {
+			edgeStart = append(edgeStart, lt)
+		}
+	}
+	add("Ledger entries near the end, likely on the next statement", edgeEnd, 1)
+
+	// Matched entries whose ledger date falls outside the period are on the
+	// statement but on the other side of the ledger cut.
+	var matchedAfter, matchedBefore []LedgerTransaction
+	for _, m := range result.Matches {
+		if !m.LedgerTransaction.Date.Before(periodEnd) {
+			matchedAfter = append(matchedAfter, *m.LedgerTransaction)
+		} else if m.LedgerTransaction.Date.Before(stmt.StartDate) {
+			matchedBefore = append(matchedBefore, *m.LedgerTransaction)
+		}
+	}
+	add("Matched entries dated after "+stmt.EndDate.Format("2006-01-02")+" in the ledger", matchedAfter, -1)
+
+	if closing == nil {
+		add("Ledger entries near the start, likely on the previous statement", edgeStart, 1)
+		add("Matched entries dated before "+stmt.StartDate.Format("2006-01-02")+" in the ledger", matchedBefore, -1)
+	}
+
+	sum.Unexplained = sum.Difference
+	for _, line := range sum.Explained {
+		sum.Unexplained -= line.Amount
+	}
+	return sum
+}
+
+// FormatMoney formats an amount like ledger does: "$ -1,234.56"
+func FormatMoney(value float64, currency string) string {
+	if currency == "" {
+		currency = "$"
+	}
+	if math.Abs(value) < 0.005 {
+		value = 0
+	}
+	sign := ""
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	whole := fmt.Sprintf("%.2f", value)
+	intPart, frac := whole[:len(whole)-3], whole[len(whole)-3:]
+	var b strings.Builder
+	for i, c := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return currency + " " + sign + b.String() + frac
 }
