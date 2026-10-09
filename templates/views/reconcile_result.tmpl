@@ -1,67 +1,59 @@
 {{ define "content" }}
 <div class="row">
   <div class="span12">
-    <h2>Reconciliation - {{.bankAccount}}</h2>
+    <h2>Reconcile {{.bankAccount}}</h2>
 
     {{ range .sections }}
     {{ $cur := .Statement.Currency }}
     {{ $sum := .Summary }}
     <div class="reconcile-section">
       <h3>
-        {{ if eq $cur "US$" }}Dollars{{ else }}Pesos{{ end }} ({{$cur}})
+        {{ if eq $cur "US$" }}Dollars{{ else }}Pesos{{ end }}
         <small>{{$sum.StartDate.Format "2006-01-02"}} &rarr; {{$sum.EndDate.Format "2006-01-02"}}</small>
         {{ if $sum.Reconciled }}
-          <span class="label label-success">Reconciled</span>
+          <span class="label label-success" title="{{$sum.StatementLabel}} and {{$sum.LedgerLabel}} both {{money $sum.LedgerAmount $cur}}">Reconciled &middot; {{money $sum.LedgerAmount $cur}}</span>
         {{ else }}
           <span class="label label-important">Off by {{money $sum.Difference $cur}}</span>
         {{ end }}
       </h3>
 
+      {{ if not $sum.Reconciled }}
       <table class="table table-condensed reconcile-summary">
         <tbody>
-          <tr>
-            <td>{{$sum.StatementLabel}}{{ if $sum.StatementNote }}<br><small class="muted">{{$sum.StatementNote}}</small>{{ end }}</td>
-            <td class="num">{{money $sum.StatementAmount $cur}}</td>
+          <tr><td title="{{$sum.StatementNote}}">{{$sum.StatementLabel}}</td><td class="num">{{money $sum.StatementAmount $cur}}</td></tr>
+          <tr><td title="{{$sum.LedgerNote}}">{{$sum.LedgerLabel}}</td><td class="num">{{money $sum.LedgerAmount $cur}}</td></tr>
+          <tr class="total"><td title="Ledger minus statement">Difference</td><td class="num">{{money $sum.Difference $cur}}</td></tr>
+          {{ range $sum.Explained }}
+          <tr class="explained"><td>{{.Label}} ({{.Count}})</td><td class="num">{{money .Amount $cur}}</td></tr>
+          {{ end }}
+          <tr class="total {{ if $sum.Explainable }}ok{{ else }}bad{{ end }}">
+            <td title="{{ if $sum.Explainable }}Fixing the items below will reconcile this statement{{ else }}Something before this period differs too{{ end }}">Unexplained</td>
+            <td class="num">{{money $sum.Unexplained $cur}}</td>
           </tr>
-          <tr>
-            <td>{{$sum.LedgerLabel}}</td>
-            <td class="num">{{money $sum.LedgerAmount $cur}}</td>
-          </tr>
-          <tr class="total">
-            <td>Difference <small class="muted">(ledger &minus; statement)</small></td>
-            <td class="num">{{money $sum.Difference $cur}}</td>
-          </tr>
-          {{ if not $sum.Reconciled }}
-            {{ range $sum.Explained }}
-            <tr class="explained">
-              <td>{{.Label}} ({{.Count}})</td>
-              <td class="num">{{money .Amount $cur}}</td>
-            </tr>
-            {{ end }}
-            <tr class="total {{ if $sum.Explainable }}ok{{ else }}bad{{ end }}">
-              <td>
-                Unexplained
-                {{ if $sum.Explainable }}
-                  <br><small>Fixing the items below will reconcile this statement.</small>
-                {{ else }}
-                  <br><small>Something outside this period differs too, e.g. an earlier statement that didn't reconcile.</small>
-                {{ end }}
-              </td>
-              <td class="num">{{money $sum.Unexplained $cur}}</td>
-            </tr>
+        </tbody>
+      </table>
+      {{ end }}
+
+      {{ if .Result.UnmatchedLedger }}
+      <h4>Not on statement</h4>
+      <table class="table table-condensed">
+        <tbody>
+          {{ range .Result.UnmatchedLedger }}
+          <tr class="error"><td class="date">{{.Date.Format "2006-01-02"}}</td><td>{{.Description}}</td><td class="num">{{money .Amount $cur}}</td></tr>
           {{ end }}
         </tbody>
       </table>
+      {{ end }}
 
-      {{ if .Result.UnmatchedLedger }}
-      <h4>Ledger entries not on the statement ({{len .Result.UnmatchedLedger}})</h4>
-      <table class="table table-condensed table-striped">
+      {{ if .Result.UnmatchedBank }}
+      <h4>Missing from ledger</h4>
+      <table class="table table-condensed">
         <tbody>
-          {{ range .Result.UnmatchedLedger }}
-          <tr class="error">
+          {{ range .Result.UnmatchedBank }}
+          <tr class="warning">
             <td class="date">{{.Date.Format "2006-01-02"}}</td>
-            <td>{{.Description}}</td>
-            <td class="num">{{money .Amount $cur}}</td>
+            <td>{{.Description}}{{ if .Reference }} <small class="muted">{{.Reference}}</small>{{ end }}</td>
+            <td class="num">{{money (sub .Credit .Debit) $cur}}</td>
           </tr>
           {{ end }}
         </tbody>
@@ -69,43 +61,31 @@
       {{ end }}
 
       {{ if .Result.BoundaryLedger }}
-      <h4>Ledger entries near the period edges ({{len .Result.BoundaryLedger}}) <small>not on this statement; usually on the previous or next one</small></h4>
-      <table class="table table-condensed">
-        <tbody>
-          {{ range .Result.BoundaryLedger }}
-          <tr class="muted">
-            <td class="date">{{.Date.Format "2006-01-02"}}</td>
-            <td>{{.Description}}</td>
-            <td class="num">{{money .Amount $cur}}</td>
-          </tr>
-          {{ end }}
-        </tbody>
-      </table>
+      <details>
+        <summary title="Ledger entries within a couple of days of the period edges; usually on the previous or next statement">Near period edges ({{len .Result.BoundaryLedger}})</summary>
+        <table class="table table-condensed">
+          <tbody>
+            {{ range .Result.BoundaryLedger }}
+            <tr class="muted"><td class="date">{{.Date.Format "2006-01-02"}}</td><td>{{.Description}}</td><td class="num">{{money .Amount $cur}}</td></tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </details>
       {{ end }}
 
-      <details {{ if .Result.UnmatchedBank }}open{{ end }}>
-        <summary>
-          <strong>Statement transactions</strong>
-          &mdash; {{len .Result.AllBankTransactions}}, {{len .Result.Matches}} matched{{ if .Result.UnmatchedBank }}, <span class="text-warning">{{len .Result.UnmatchedBank}} missing from ledger</span>{{ end }}
-        </summary>
+      <details>
+        <summary>All statement transactions ({{len .Result.AllBankTransactions}})</summary>
         <table class="table table-condensed">
           <tbody>
             {{ range .Result.AllBankTransactions }}
             <tr class="{{ if not .Matched }}warning{{ end }}">
               <td class="date">{{.Transaction.Date.Format "2006-01-02"}}</td>
-              <td>
-                {{.Transaction.Description}}
-                {{ if .Transaction.Reference }}<small class="muted">{{.Transaction.Reference}}</small>{{ end }}
-              </td>
+              <td>{{.Transaction.Description}}{{ if .Transaction.Reference }} <small class="muted">{{.Transaction.Reference}}</small>{{ end }}</td>
               <td class="num">{{money (sub .Transaction.Credit .Transaction.Debit) $cur}}</td>
-              <td>
-                {{ if not .Matched }}
-                  <span class="label label-warning">Not in ledger</span>
-                {{ else if eq .MatchType "exact" }}
-                  <span class="label label-success">Matched</span>
-                {{ else }}
-                  <span class="label label-success" title="Ledger date {{.LedgerTransaction.Date.Format "2006-01-02"}}">Matched &plusmn;date</span>
-                {{ end }}
+              <td class="status">
+                {{ if not .Matched }}<span class="text-warning">&#10007;</span>
+                {{ else if eq .MatchType "exact" }}<span class="text-success">&#10003;</span>
+                {{ else }}<span class="text-success" title="Ledger date {{.LedgerTransaction.Date.Format "2006-01-02"}}">&#10003;&#8776;</span>{{ end }}
               </td>
             </tr>
             {{ end }}
@@ -117,17 +97,15 @@
 
     {{ if .suggestedEntries }}
     <div class="well">
-      <h4>Suggested Ledger Entries</h4>
-      <p>Edit and copy these entries to add the statement items missing from the ledger:</p>
+      <h4>Suggested entries</h4>
       <textarea class="edit full-file suggested-entries">{{ range .suggestedEntries }}{{.}}
 {{ end }}</textarea>
-      <button class="btn btn-small" onclick="copyToClipboard()">Copy to Clipboard</button>
+      <button class="btn btn-small" onclick="copyToClipboard()">Copy</button>
     </div>
     {{ end }}
 
-    <hr>
-    <a href="{{.root}}/{{.ledger}}/reconcile" class="btn">Reconcile Another Statement</a>
-    <a href="{{.root}}/{{.ledger}}" class="btn btn-primary">Back to Ledger</a>
+    <a href="{{.root}}/{{.ledger}}/reconcile" class="btn">Reconcile another</a>
+    <a href="{{.root}}/{{.ledger}}" class="btn btn-primary">Back to ledger</a>
   </div>
 </div>
 

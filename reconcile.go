@@ -692,6 +692,7 @@ type ReconciliationSummary struct {
 	StatementAmount float64
 	StatementNote   string
 	LedgerLabel     string
+	LedgerNote      string
 	LedgerAmount    float64
 	Difference      float64 // LedgerAmount - StatementAmount
 	Explained       []SummaryLine
@@ -724,24 +725,24 @@ func SummarizeReconciliation(ledgerName string, account string, stmt *BankStatem
 
 	periodEnd := stmt.EndDate.AddDate(0, 0, 1)
 	ledgerEnd := ledgerBalance(ledgerName, account, periodEnd, stmt.Currency)
-	endLabel := "end of " + stmt.EndDate.Format("2006-01-02")
 
 	if closing != nil {
-		sum.StatementLabel = "Statement closing balance"
+		sum.StatementLabel = "Statement"
 		sum.StatementAmount = closing.Value
 		if stmt.Liability {
 			sum.StatementAmount = -closing.Value
-			sum.StatementNote = fmt.Sprintf("shown on the statement as %s owed", FormatMoney(closing.Value, stmt.Currency))
+			sum.StatementNote = fmt.Sprintf("Closing balance, %s owed", FormatMoney(closing.Value, stmt.Currency))
 		}
-		sum.LedgerLabel = "Ledger balance at " + endLabel
+		sum.LedgerLabel = "Ledger"
+		sum.LedgerNote = "Balance at end of " + stmt.EndDate.Format("2006-01-02")
 		sum.LedgerAmount = ledgerEnd
 	} else {
 		for _, tx := range stmt.Transactions {
 			sum.StatementAmount += tx.Credit - tx.Debit
 		}
-		sum.StatementLabel = "Statement net movement"
-		sum.StatementNote = "statement has no closing balance; comparing movement within the period"
-		sum.LedgerLabel = "Ledger net movement " + stmt.StartDate.Format("2006-01-02") + " to " + stmt.EndDate.Format("2006-01-02")
+		sum.StatementLabel = "Statement movement"
+		sum.StatementNote = "No closing balance on the statement; comparing net movement within the period"
+		sum.LedgerLabel = "Ledger movement"
 		sum.LedgerAmount = ledgerEnd - ledgerBalance(ledgerName, account, stmt.StartDate, stmt.Currency)
 	}
 	sum.Difference = sum.LedgerAmount - sum.StatementAmount
@@ -757,13 +758,13 @@ func SummarizeReconciliation(ledgerName string, account string, stmt *BankStatem
 		}
 	}
 
-	add("Ledger entries not on the statement", result.UnmatchedLedger, 1)
+	add("Not on statement", result.UnmatchedLedger, 1)
 
 	var missing []LedgerTransaction
 	for _, bt := range result.UnmatchedBank {
 		missing = append(missing, LedgerTransaction{Amount: bt.Credit - bt.Debit})
 	}
-	add("Statement items missing from the ledger", missing, -1)
+	add("Missing from ledger", missing, -1)
 
 	// Edge entries near the end are inside the ledger cut but not yet billed.
 	// Near the start they were billed on the previous statement, which only
@@ -776,7 +777,7 @@ func SummarizeReconciliation(ledgerName string, account string, stmt *BankStatem
 			edgeStart = append(edgeStart, lt)
 		}
 	}
-	add("Ledger entries near the end, likely on the next statement", edgeEnd, 1)
+	add("Next statement", edgeEnd, 1)
 
 	// Matched entries whose ledger date falls outside the period are on the
 	// statement but on the other side of the ledger cut.
@@ -788,11 +789,11 @@ func SummarizeReconciliation(ledgerName string, account string, stmt *BankStatem
 			matchedBefore = append(matchedBefore, *m.LedgerTransaction)
 		}
 	}
-	add("Matched entries dated after "+stmt.EndDate.Format("2006-01-02")+" in the ledger", matchedAfter, -1)
+	add("Matched, ledger date after period", matchedAfter, -1)
 
 	if closing == nil {
-		add("Ledger entries near the start, likely on the previous statement", edgeStart, 1)
-		add("Matched entries dated before "+stmt.StartDate.Format("2006-01-02")+" in the ledger", matchedBefore, -1)
+		add("Previous statement", edgeStart, 1)
+		add("Matched, ledger date before period", matchedBefore, -1)
 	}
 
 	sum.Unexplained = sum.Difference
