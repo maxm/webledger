@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"math"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -97,5 +99,44 @@ func checkVisaPeriods(t *testing.T, stmts []*BankStatement) {
 				t.Errorf("installment marker left in description %q", tx.Description)
 			}
 		}
+	}
+}
+
+// Itau statements carry SALDO ANTERIOR / SALDO FINAL rows; the closing balance
+// must match the running balance of the last movement.
+func TestParseItauStatementBalances(t *testing.T) {
+	files, _ := filepath.Glob("sample_bank_statements/Estado_De_Cuenta_*.xls")
+	if len(files) == 0 {
+		t.Skip("no Itau samples")
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := ParseItauStatement(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		t.Logf("%s: %s %s to %s, %d tx, open %v close %v", filepath.Base(f), s.Currency, s.StartDate.Format("2006-01-02"), s.EndDate.Format("2006-01-02"), len(s.Transactions), s.StartBalances, s.EndBalances)
+		if len(s.StartBalances) != 1 || len(s.EndBalances) != 1 {
+			t.Errorf("%s: missing opening or closing balance", f)
+			continue
+		}
+		if s.StartDate.IsZero() || s.EndDate.IsZero() {
+			t.Errorf("%s: no period", f)
+		}
+		if n := len(s.Transactions); n > 0 && math.Abs(s.Transactions[n-1].Balance-s.EndBalances[0].Value) > 0.005 {
+			t.Errorf("%s: closing %.2f != last balance %.2f", f, s.EndBalances[0].Value, s.Transactions[n-1].Balance)
+		}
+	}
+}
+
+// A statement without dates must not report the whole ledger as unmatched.
+func TestReconcileStatementWithoutPeriod(t *testing.T) {
+	ledgerTx := []LedgerTransaction{{Date: time.Date(2021, 7, 22, 0, 0, 0, 0, time.UTC), Amount: -100}}
+	r := ReconcileBankStatement(&BankStatement{Currency: "$"}, ledgerTx)
+	if len(r.UnmatchedLedger) != 0 || len(r.BoundaryLedger) != 0 {
+		t.Errorf("got %d unmatched, %d boundary ledger transactions", len(r.UnmatchedLedger), len(r.BoundaryLedger))
 	}
 }

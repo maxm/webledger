@@ -461,9 +461,10 @@ func ReconcileBankStatement(statement *BankStatement, ledgerTransactions []Ledge
 		}
 	}
 	
-	// Collect unmatched ledger transactions within the bank statement date range
+	// Collect unmatched ledger transactions within the bank statement date range.
+	// Without a period (an empty statement) there is nothing to compare against.
 	for li, lt := range ledgerTransactions {
-		if matchedLedger[li] {
+		if matchedLedger[li] || statement.StartDate.IsZero() || statement.EndDate.IsZero() {
 			continue
 		}
 		// Only include ledger transactions within the bank statement date range
@@ -699,6 +700,7 @@ type ReconciliationSummary struct {
 	Unexplained     float64 // Difference not accounted for by Explained
 	Matched         int
 	BankCount       int
+	NoPeriod        bool // statement has no movements or dates to compare
 }
 
 func (s ReconciliationSummary) Reconciled() bool  { return math.Abs(s.Difference) < 0.005 }
@@ -714,6 +716,10 @@ func SummarizeReconciliation(ledgerName string, account string, stmt *BankStatem
 		EndDate:   stmt.EndDate,
 		Matched:   len(result.Matches),
 		BankCount: len(stmt.Transactions),
+	}
+	if stmt.StartDate.IsZero() || stmt.EndDate.IsZero() {
+		sum.NoPeriod = true
+		return sum
 	}
 
 	var closing *Amount

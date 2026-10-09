@@ -357,7 +357,8 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 		return nil, fmt.Errorf("could not find header row in Itau statement")
 	}
 
-	for i := headerRow + 1; i < maxRow; i++ {
+	var openingDate time.Time
+	for i := headerRow + 1; i <= maxRow; i++ { // MaxRow is the last row index
 		var row *xls.Row
 		func() {
 			defer func() {
@@ -392,8 +393,14 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 			dateStr = strings.TrimSpace(row.Col(dateCol))
 		}
 
-		// Stop at empty date or "SALDO FINAL"
-		if dateStr == "" || strings.Contains(strings.ToUpper(dateStr), "SALDO FINAL") {
+		// "SALDO FINAL" ends the movements and carries the closing balance
+		if itauRowContains(row, lastCol, "SALDO FINAL") {
+			if bal, ok := itauRowBalance(row, balanceCol, lastCol); ok {
+				statement.EndBalances = []Amount{{Currency: statement.Currency, Value: bal}}
+			}
+			break
+		}
+		if dateStr == "" {
 			break
 		}
 		
@@ -402,12 +409,16 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 			continue
 		}
 
-		// Skip "SALDO ANTERIOR"
+		// "SALDO ANTERIOR" carries the opening balance, dated the day before the period
 		concept := ""
 		if conceptCol >= 0 && conceptCol < lastCol {
 			concept = strings.TrimSpace(row.Col(conceptCol))
 		}
 		if strings.Contains(strings.ToUpper(concept), "SALDO ANTERIOR") {
+			if bal, ok := itauRowBalance(row, balanceCol, lastCol); ok {
+				statement.StartBalances = []Amount{{Currency: statement.Currency, Value: bal}}
+			}
+			openingDate, _ = parseItauDate(dateStr)
 			continue
 		}
 
@@ -462,7 +473,40 @@ func ParseItauStatement(reader io.ReadSeeker) (*BankStatement, error) {
 		}
 	}
 
+	// A statement without movements still has a balance: date it at the opening
+	if len(statement.Transactions) == 0 && !openingDate.IsZero() {
+		statement.StartDate = openingDate
+		statement.EndDate = openingDate
+	}
+
 	return statement, nil
+}
+
+// itauRowContains reports whether any cell in the row contains text (case-insensitive)
+func itauRowContains(row *xls.Row, lastCol int, text string) bool {
+	for c := 0; c < lastCol; c++ {
+		if strings.Contains(strings.ToUpper(row.Col(c)), text) {
+			return true
+		}
+	}
+	return false
+}
+
+// itauRowBalance reads the balance of an Itau SALDO row: the Saldo column if
+// present, otherwise the last amount in the row.
+func itauRowBalance(row *xls.Row, balanceCol int, lastCol int) (float64, bool) {
+	if balanceCol >= 0 && balanceCol < lastCol {
+		if v := strings.TrimSpace(row.Col(balanceCol)); v != "" {
+			return parseAmount(v), true
+		}
+	}
+	for c := lastCol - 1; c >= 0; c-- {
+		v := strings.TrimSpace(row.Col(c))
+		if v != "" && strings.ContainsAny(v, "0123456789") && !strings.Contains(v, "/") {
+			return parseAmount(v), true
+		}
+	}
+	return 0, false
 }
 
 // parseBrouDate parses a date in DD/MM/YYYY format or Excel serial number

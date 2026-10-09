@@ -9,15 +9,20 @@
     <div class="reconcile-section">
       <h3>
         {{ if eq $cur "US$" }}Dollars{{ else }}Pesos{{ end }}
+        {{ if $sum.NoPeriod }}
+          <span class="label">No movements</span>
+        {{ else }}
         <small>{{$sum.StartDate.Format "2006-01-02"}} &rarr; {{$sum.EndDate.Format "2006-01-02"}}</small>
-        {{ if $sum.Reconciled }}
+        {{ end }}
+        {{ if $sum.NoPeriod }}
+        {{ else if $sum.Reconciled }}
           <span class="label label-success" title="{{$sum.StatementLabel}} and {{$sum.LedgerLabel}} both {{money $sum.LedgerAmount $cur}}">Reconciled &middot; {{money $sum.LedgerAmount $cur}}</span>
         {{ else }}
           <span class="label label-important">Off by {{money $sum.Difference $cur}}</span>
         {{ end }}
       </h3>
 
-      {{ if not $sum.Reconciled }}
+      {{ if not (or $sum.NoPeriod $sum.Reconciled) }}
       <table class="table table-condensed reconcile-summary">
         <tbody>
           <tr><td title="{{$sum.StatementNote}}">{{$sum.StatementLabel}}</td><td class="num">{{money $sum.StatementAmount $cur}}</td></tr>
